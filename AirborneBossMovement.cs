@@ -3,389 +3,390 @@ using Dreamteck.Splines;
 
 /// <summary>
 /// Inherits from BaseBossMovement.
-/// Used for purely flying bosses (like the Dragon).
-/// Supports Spline mode (observation coil / escape spline) and Freestyle mode
-/// (pursue, swoop, bank, withdraw, stillhold), with a smooth BlendingToSpline transition.
+/// Used for purely flying bosses (like the Dragon or Butterfly).
+/// Exclusively requests Airborne paths from the BossPathManager.
 ///
-/// BEHAVIORAL LOOP:
-///   Observation Coil  — home base, coils around Power Crystal, regenerates
-///   Freestyle         — departs coil to pursue/attack or withdraw
-///   BlendingToSpline  — glides back onto observation OR escape spline
-///   Escape Spline     — triggered by ForceImmediateEvasion under threat
-///
-/// UNDULATION DESIGN:
-///   currentMode + CurrentIntent are read by DragonMovementManager each frame.
-///   Undulation amplitude collapses on Pursue/Swoop (visual attack cue) and
-///   rebuilds to full sway during Stillhold/Bank.
+/// Movement is driven by the ROOT object's SplineFollower (assigned here),
+/// and SegmentedDragonManager's breadcrumb system drags all body segments behind it.
 /// </summary>
 public class AirborneBossMovement : BaseBossMovement
 {
-    public enum MovementMode
-    {
-        Spline,
-        Freestyle,
-        BlendingToSpline
-    }
+    [Header("Airborne Movement Settings")]
+    [Tooltip("Speed at which the dragon follows its observation spline (units/sec).")]
+    public float observationSpeed = 8f;
 
-    public enum FreestyleIntent
-    {
-        Pursue,
-        Swoop,
-        Bank,
-        Stillhold,
-        Withdraw
-    }
+    [Tooltip("Speed at which the dragon flies along an escape route.")]
+    public float escapeSpeed = 18f;
 
-    [Header("Mode State")]
-    public MovementMode currentMode = MovementMode.Spline;
+    private GameObject currentActivePath;
+    private SplineFollower rootFollower;
 
-    // ─── Speed (VR-scaled, hard cap = 2 m/s) ─────────────────────────────────
-    [Header("Movement Speed — VR tuned (max 2 m/s)")]
-    [Tooltip("Base speed for Pursuit and most freestyle movement.")]
-    public float baseFlightSpeed = 1.5f;
-
-    [Tooltip("Speed used when coiling on the Observation Spline. Slow and stately.")]
-    public float observationCoilSpeed = 0.5f;
-
-    [Tooltip("Hard cap for Swoop — the only moment the dragon hits maximum VR speed.")]
-    public float swoopMaxSpeed = 2.0f;
-
-    // ─── Freestyle Tuning ─────────────────────────────────────────────────────
-    [Header("Freestyle Tuning")]
-    [Tooltip("Rate of bodyUndulationRate — feeds into Stillhold hover orbit speed.")]
-    public float bodyUndulationRate = 1.2f;
-    [Tooltip("How fast the root rotates toward its target. Lower = more deliberate turns.")]
-    public float coilTightness = 3f;
-    public float minTurnRadius = 3f;
-
-    // ─── Tether ───────────────────────────────────────────────────────────────
-    [Header("Tether Struggle Setup")]
-    [Tooltip("Local offset direction the dragon pulls toward when tethered.")]
-    public Vector3 tetherStruggleDirection = new Vector3(0f, 5f, 5f);
-    [Tooltip("How far the dragon tries to push past the anchor to create rope tension.")]
-    public float tetherStruggleDistance = 15f;
-
-    // ─── Private ──────────────────────────────────────────────────────────────
-    private SplineFollower          splineFollower;
-    private CreatureStatusEffects   statusEffects;
-    private GameObject              currentActivePath;
-
-    // Blending state
-    private float      blendTimer           = 0f;
-    private float      dynamicBlendDuration = 2f;
-    private Vector3    blendStartPosition;
+    // --- Blending State ---
+    private bool isBlending = false;
+    private Vector3 blendStartPosition;
     private Quaternion blendStartRotation;
+    private SplineSample blendTargetSample;
+    private float blendTimer = 0f;
+    private float blendDuration = 0f;
+    private float blendSpeed = 0f;
+    private SplineComputer pendingSpline;
+    private bool isPendingEscape = false;
 
-    // Freestyle state
-    private FreestyleIntent _currentIntent = FreestyleIntent.Stillhold;
-    /// <summary>
-    /// Read-only access to the current freestyle intent.
-    /// DragonMovementManager queries this each frame to scale undulation amplitude.
-    /// Collapse on Pursue/Swoop is the visual attack cue; full sway on Stillhold/Bank.
-    /// </summary>
-    public FreestyleIntent CurrentIntent => _currentIntent;
+    // --- Fallback State ---
+    private bool isFreestylingFallback = false;
+    private float nextEvadeCheckTime = 0f;
 
-    private Vector3 freestyleTargetPosition;
-    private float   freestyleSpeed;
-    private float   currentSpeedMultiplier = 1f;
-
-    // Stillhold hover orbit — captures position when entering Stillhold
-    private Vector3 stillholdAnchor;
-
-    // ─── Unity Lifecycle ──────────────────────────────────────────────────────
-
+    // --- Initialise once the scene is ready ---
     protected override void Awake()
     {
-        base.Awake();
-        splineFollower = GetComponent<SplineFollower>();
-        statusEffects  = GetComponent<CreatureStatusEffects>();
+        base.Awake(); // finds pathManager and bossBrain
+
+        // The root object IS the SplineFollower that drives the whole dragon.
+        rootFollower = GetComponent<SplineFollower>();
+        if (rootFollower == null)
+        {
+            rootFollower = gameObject.AddComponent<SplineFollower>();
+            Debug.Log($"[{gameObject.name}] AirborneBossMovement: Added SplineFollower to root.");
+        }
+
+        // Start with following disabled — Start() will assign the first path.
+        rootFollower.follow = false;
     }
+
+    protected virtual void Start()
+    {
+        InitialiseOnObservationPath();
+    }
+
+    /// <summary>
+    /// Picks the first available Airborne observation path and snaps the root onto it.
+    /// Called once on Start so the dragon is immediately visible and moving.
+    /// </summary>
+    private void InitialiseOnObservationPath()
+    {
+        if (pathManager == null)
+        {
+            Debug.LogWarning($"[{gameObject.name}] AirborneBossMovement: No BossPathManager in scene — cannot initialise path.");
+            return;
+        }
+
+        currentActivePath = GetObservationPath(PathTypeTag.PathType.Airborne);
+
+        if (currentActivePath != null)
+        {
+            AssignSplineAndFollow(currentActivePath, observationSpeed);
+            Debug.Log($"<color=green>[{gameObject.name}] AirborneBossMovement: Dragon placed on observation path '{currentActivePath.name}'.</color>");
+        }
+        else
+        {
+            Debug.LogWarning($"[{gameObject.name}] AirborneBossMovement: No Airborne observation paths found. Dragon will stay at spawn position.");
+        }
+    }
+
+    /// <summary>
+    /// Smoothly transitions the dragon from its current position to the given path instead of teleporting.
+    /// </summary>
+    private void SmoothlyTransitionToPath(GameObject pathObj, float speed, bool isEscape)
+    {
+        if (rootFollower == null || pathObj == null) return;
+
+        SplineComputer splineComputer = pathObj.GetComponentInChildren<SplineComputer>();
+        if (splineComputer == null)
+        {
+            Debug.LogWarning($"[{gameObject.name}] Path '{pathObj.name}' has no SplineComputer. Cannot transition.");
+            return;
+        }
+
+        isBlending = true;
+        blendStartPosition = transform.position;
+        blendStartRotation = transform.rotation;
+        blendTimer = 0f;
+        blendSpeed = speed;
+        pendingSpline = splineComputer;
+        isPendingEscape = isEscape;
+
+        blendTargetSample = new SplineSample();
+        if (isEscape)
+        {
+            // Escape splines are open: fly to the start (0.0)
+            blendTargetSample = splineComputer.Evaluate(0.0);
+        }
+        else
+        {
+            // Observation splines are closed: fly to the nearest point on the track
+            splineComputer.Project(blendStartPosition, ref blendTargetSample);
+        }
+
+        float distance = Vector3.Distance(blendStartPosition, blendTargetSample.position);
+        blendDuration = distance / (speed > 0f ? speed : 1f);
+
+        // Disable regular spline following while we freestyle fly towards it
+        rootFollower.follow = false;
+    }
+
+    /// <summary>
+    /// Assigns a SplineComputer from the given path GameObject to the root SplineFollower and starts following immediately.
+    /// </summary>
+    private void AssignSplineAndFollow(GameObject pathObj, float speed)
+    {
+        if (rootFollower == null || pathObj == null) return;
+
+        // The path prefab can hold the SplineComputer directly on the root or on a child.
+        SplineComputer splineComputer = pathObj.GetComponentInChildren<SplineComputer>();
+        if (splineComputer == null)
+        {
+            Debug.LogWarning($"[{gameObject.name}] Path '{pathObj.name}' has no SplineComputer. Cannot follow.");
+            return;
+        }
+
+        rootFollower.spline = splineComputer;
+        rootFollower.followSpeed = speed;
+        rootFollower.wrapMode = SplineFollower.Wrap.Loop;
+        rootFollower.follow = true;
+
+        // Also update the SegmentedDragonManager's internal spline reference so the breadcrumb
+        // history stays in sync with whichever track the dragon is currently following.
+        SegmentedDragonManager dragonBody = GetComponent<SegmentedDragonManager>();
+        if (dragonBody != null)
+        {
+            dragonBody.SwitchToNewSpline(splineComputer);
+        }
+    }
+
+    // --- Core Movement Tick ---
 
     protected override void TickMovement()
     {
-        if (statusEffects != null)
-            currentSpeedMultiplier = statusEffects.CurrentSpeedMultiplier;
-
-        switch (currentMode)
+        if (isBlending)
         {
-            case MovementMode.Spline:
-                UpdateSplineMode();
-                break;
-            case MovementMode.Freestyle:
-                UpdateFreestyleMode();
-                break;
-            case MovementMode.BlendingToSpline:
-                UpdateBlendingMode();
-                break;
+            ExecuteBlendTick();
+            return;
         }
 
         if (isTethered)
         {
-            UpdateTetherStruggle();
             ApplyTetherRubberBand();
-        }
-    }
-
-    // ─── Tether ───────────────────────────────────────────────────────────────
-
-    private void UpdateTetherStruggle()
-    {
-        GameObject playerObj = GameObject.FindGameObjectWithTag("Player");
-
-        if (playerObj != null && bossBrain != null)
-        {
-            Vector3 playerPos = playerObj.transform.position;
-            Vector3 toPlayer  = (playerPos - transform.position).normalized;
-
-            if (bossBrain.currentPhase == BossCreature.BossPhase.Exhausted || bossBrain.GetCurrentHealthPct() < 0.25f)
-            {
-                freestyleTargetPosition = transform.position - toPlayer * 6f + Vector3.up * 4f;
-            }
-            else if (bossBrain.currentPhase == BossCreature.BossPhase.Engaged)
-            {
-                freestyleTargetPosition = playerPos + toPlayer * -2f + Vector3.up * 1.5f;
-            }
-            else
-            {
-                Vector3 side = Vector3.Cross(toPlayer, Vector3.up);
-                freestyleTargetPosition = transform.position + side * 7f + Vector3.up * 6f - toPlayer * 2f;
-            }
-        }
-        else
-        {
-            SegmentedDragonManager dragonManager = GetComponent<SegmentedDragonManager>();
-            if (dragonManager != null && dragonManager.TetherAnchorTransform != null)
-            {
-                Vector3 worldStruggleDirection = transform.TransformDirection(tetherStruggleDirection.normalized);
-                freestyleTargetPosition = dragonManager.TetherAnchorTransform.position + (worldStruggleDirection * tetherStruggleDistance);
-            }
-        }
-    }
-
-    // ─── Public Movement Requests ─────────────────────────────────────────────
-
-    /// <summary>
-    /// Switches to Freestyle mode with the given intent and target.
-    /// Called by DragonActionListeners in response to Quest Machine actions.
-    /// </summary>
-    public void RequestFreestyleIntent(FreestyleIntent intent, Vector3 targetPos)
-    {
-        currentMode            = MovementMode.Freestyle;
-        _currentIntent         = intent;
-        freestyleTargetPosition = targetPos;
-
-        // Capture anchor when entering Stillhold so the hover orbit has a stable centre
-        if (intent == FreestyleIntent.Stillhold)
-            stillholdAnchor = transform.position;
-
-        if (splineFollower != null) splineFollower.follow = false;
-    }
-
-    /// <summary>
-    /// Begins a smooth blend from the current position onto the given observation spline.
-    /// Used for both returning to the Observation Coil and landing on an Escape Spline.
-    /// As the dragon glides in, DragonMovementManager collapses undulation to near-zero
-    /// for a precise, purposeful dock.
-    /// </summary>
-    public void RequestReturnToCoil(GameObject observationPath)
-    {
-        if (observationPath == null) return;
-
-        currentActivePath  = observationPath;
-        currentMode        = MovementMode.BlendingToSpline;
-        blendTimer         = 0f;
-        blendStartPosition = transform.position;
-        blendStartRotation = transform.rotation;
-
-        if (splineFollower != null)
-        {
-            SplineComputer targetSpline = observationPath.GetComponentInChildren<SplineComputer>();
-            splineFollower.spline = targetSpline;
-            splineFollower.follow = false; // Stay manual until blend finishes
-
-            if (targetSpline != null)
-            {
-                SplineSample targetSample = new SplineSample();
-                targetSpline.Project(transform.position, ref targetSample);
-                float distanceToSpline = Vector3.Distance(transform.position, targetSample.position);
-
-                // Dynamic duration based on distance — no jarring teleport snaps in VR
-                dynamicBlendDuration = distanceToSpline / (baseFlightSpeed > 0 ? baseFlightSpeed : 1f);
-                if (dynamicBlendDuration < 0.5f) dynamicBlendDuration = 0.5f;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Routes to RequestReturnToCoil — the same smooth blend applies for escape splines.
-    /// </summary>
-    public void RequestGlideToSpline(GameObject escapePath)
-    {
-        RequestReturnToCoil(escapePath);
-    }
-
-    // ─── Movement Mode Updates ────────────────────────────────────────────────
-
-    private void UpdateSplineMode()
-    {
-        if (splineFollower != null)
-        {
-            splineFollower.follow      = true;
-            // Observation coil uses its own slow speed; status effects can still slow/freeze
-            splineFollower.followSpeed = observationCoilSpeed * currentSpeedMultiplier;
-        }
-    }
-
-    private void UpdateFreestyleMode()
-    {
-        // ── VR Speed Table (hard cap: swoopMaxSpeed = 2 m/s) ─────────────────
-        switch (_currentIntent)
-        {
-            case FreestyleIntent.Pursue:
-                freestyleSpeed = baseFlightSpeed;                   // 1.5 m/s
-                break;
-            case FreestyleIntent.Swoop:
-                freestyleSpeed = swoopMaxSpeed;                     // 2.0 m/s — hard cap, brief
-                break;
-            case FreestyleIntent.Withdraw:
-                freestyleSpeed = baseFlightSpeed * 0.6f;            // ~0.9 m/s — banking away
-                break;
-            case FreestyleIntent.Bank:
-                freestyleSpeed = baseFlightSpeed * 0.55f;           // ~0.83 m/s — wide arcing turn
-                break;
-            case FreestyleIntent.Stillhold:
-                freestyleSpeed = 0f;                                // handled below (hover orbit)
-                break;
-        }
-
-        float effectiveSpeed = freestyleSpeed * currentSpeedMultiplier;
-
-        if (_currentIntent == FreestyleIntent.Stillhold)
-        {
-            // ── Stillhold: lazy elliptical hover orbit ──────────────────────
-            // The root traces a slow ellipse so Dragon_Head records a real trail.
-            // DragonMovementManager bakes maximum undulation (scale = 1.0) onto
-            // this trail — producing the full coiled serpentine look.
-            float t        = Time.time * bodyUndulationRate * 0.22f;
-            float r        = 1.8f; // orbit radius in metres (VR intimate scale)
-            Vector3 hoverTarget = stillholdAnchor + new Vector3(
-                Mathf.Cos(t) * r,
-                Mathf.Sin(t * 0.6f) * 0.5f,  // subtle vertical bob
-                Mathf.Sin(t) * r
-            );
-
-            transform.position = Vector3.MoveTowards(
-                transform.position, hoverTarget,
-                0.3f * Time.deltaTime * currentSpeedMultiplier);
-
-            Vector3 lookDir = hoverTarget - transform.position;
-            if (lookDir.sqrMagnitude > 0.001f)
-            {
-                transform.rotation = Quaternion.Slerp(
-                    transform.rotation,
-                    Quaternion.LookRotation(lookDir),
-                    Time.deltaTime * coilTightness * 0.4f);
-            }
-        }
-        else
-        {
-            // ── All other intents: turn toward target then fly forward ───────
-            Vector3 direction = (freestyleTargetPosition - transform.position).normalized;
-            if (direction != Vector3.zero)
-            {
-                Quaternion targetRotation = Quaternion.LookRotation(direction);
-                transform.rotation = Quaternion.Slerp(
-                    transform.rotation, targetRotation,
-                    Time.deltaTime * coilTightness);
-            }
-            transform.position += transform.forward * (effectiveSpeed * Time.deltaTime);
-        }
-    }
-
-    private void UpdateBlendingMode()
-    {
-        if (splineFollower == null || splineFollower.spline == null)
-        {
-            currentMode = MovementMode.Freestyle;
             return;
         }
 
-        blendTimer += Time.deltaTime * currentSpeedMultiplier;
-        float t = Mathf.Clamp01(blendTimer / dynamicBlendDuration);
-        t = t * t * (3f - 2f * t); // smoothstep
+        // Read phase from the BossCreature brain to drive movement decisions.
+        bool desiresToEscape = bossBrain != null &&
+            (bossBrain.currentPhase == BossCreature.BossPhase.Exhausted);
 
-        SplineSample targetSample = new SplineSample();
-        splineFollower.spline.Project(transform.position, ref targetSample);
-
-        transform.position = Vector3.Lerp(blendStartPosition, (Vector3)targetSample.position, t);
-        transform.rotation = Quaternion.Slerp(blendStartRotation, targetSample.rotation, t);
-
-        if (t >= 1f)
+        if (desiresToEscape)
         {
-            currentMode = MovementMode.Spline;
-            splineFollower.SetPercent(targetSample.percent);
-            splineFollower.follow = true;
-        }
-    }
-
-    // ─── Overrides ────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Forces immediate evasion to the nearest airborne escape spline.
-    /// Triggered by DragonActionListeners on "Evade" or "Ride Escape Spline".
-    /// The escape spline is a closed loop by convention — the dragon rides it until
-    /// the threat context resets and it transitions back to the observation coil.
-    /// </summary>
-    public override void ForceImmediateEvasion()
-    {
-        currentActivePath = FindNearestEscapeRoute(PathTypeTag.PathType.Airborne);
-        if (currentActivePath != null)
-        {
-            Debug.Log($"[{gameObject.name}] Evading to escape spline: {currentActivePath.name}");
-            RequestGlideToSpline(currentActivePath);
+            ExecuteEscapeChoreography();
         }
         else
         {
-            Debug.LogWarning($"[{gameObject.name}] No Airborne escape spline found — withdrawing freestyle.");
+            ExecuteObservationSpline();
+        }
+    }
 
-            GameObject playerObj = GameObject.FindGameObjectWithTag("Player");
-            if (playerObj != null)
+    private void ExecuteBlendTick()
+    {
+        blendTimer += Time.deltaTime;
+        float t = Mathf.Clamp01(blendTimer / blendDuration);
+
+        // Smoothstep
+        t = t * t * (3f - 2f * t);
+
+        transform.position = Vector3.Lerp(blendStartPosition, (Vector3)blendTargetSample.position, t);
+        transform.rotation = Quaternion.Slerp(blendStartRotation, blendTargetSample.rotation, t);
+
+        if (t >= 1f)
+        {
+            // Reached destination, snap to spline and follow
+            isBlending = false;
+            rootFollower.spline = pendingSpline;
+            rootFollower.followSpeed = blendSpeed;
+            rootFollower.wrapMode = SplineFollower.Wrap.Loop;
+            rootFollower.SetPercent(blendTargetSample.percent);
+            rootFollower.follow = true;
+
+            SegmentedDragonManager dragonBody = GetComponent<SegmentedDragonManager>();
+            if (dragonBody != null)
             {
-                Vector3 awayFromPlayer = (transform.position - playerObj.transform.position).normalized;
-                awayFromPlayer.y = 0f;
-                RequestFreestyleIntent(FreestyleIntent.Withdraw,
-                    transform.position + awayFromPlayer * 20f + Vector3.up * 10f);
-            }
-            else
-            {
-                RequestFreestyleIntent(FreestyleIntent.Withdraw,
-                    transform.position + transform.forward * 20f + Vector3.up * 10f);
+                dragonBody.SwitchToNewSpline(pendingSpline);
             }
         }
     }
 
-    public override void HandleTetherAttached()
+    // --- Observation (looping patrol path) ---
+
+    private void ExecuteObservationSpline()
     {
-        base.HandleTetherAttached();
-        Vector3 worldStruggleDirection = transform.TransformDirection(tetherStruggleDirection.normalized);
-        Vector3 struggleTarget = transform.position + (worldStruggleDirection * tetherStruggleDistance);
-        RequestFreestyleIntent(FreestyleIntent.Pursue, struggleTarget);
+        // If we already have a path assigned and the follower is running, nothing to do.
+        if (currentActivePath != null && rootFollower != null && rootFollower.follow)
+        {
+            return;
+        }
+
+        // Otherwise pick a path and start following.
+        currentActivePath = GetObservationPath(PathTypeTag.PathType.Airborne);
+        if (currentActivePath != null)
+        {
+            SmoothlyTransitionToPath(currentActivePath, observationSpeed, false);
+            Debug.Log($"[{gameObject.name}] Smoothly returning to observation spline: {currentActivePath.name}");
+        }
     }
+
+    // --- Escape choreography ---
+
+    private void ExecuteEscapeChoreography()
+    {
+        // If we are already freestyling as a fallback, don't spam path checks every frame.
+        if (currentActivePath == null)
+        {
+            if (Time.time > nextEvadeCheckTime)
+            {
+                // Try finding an evasion path every 2 seconds if we failed previously
+                ForceImmediateEvasion();
+                nextEvadeCheckTime = Time.time + 2f;
+            }
+
+            // If it's STILL null after trying to find an evasion path, execute fallback movement
+            if (currentActivePath == null)
+            {
+                isFreestylingFallback = true;
+                transform.Translate(Vector3.up * escapeSpeed * Time.deltaTime, Space.World);
+                return;
+            }
+        }
+
+        if (currentActivePath != null)
+        {
+            isFreestylingFallback = false;
+            if (rootFollower != null && rootFollower.follow && rootFollower.spline != currentActivePath.GetComponentInChildren<SplineComputer>())
+            {
+                PathTypeTag tag = currentActivePath.GetComponent<PathTypeTag>();
+                bool isEscape = tag != null && tag.isEscapeRoute;
+                SmoothlyTransitionToPath(currentActivePath, escapeSpeed, isEscape);
+            }
+            else if (!isBlending && (rootFollower == null || !rootFollower.follow))
+            {
+                PathTypeTag tag = currentActivePath.GetComponent<PathTypeTag>();
+                bool isEscape = tag != null && tag.isEscapeRoute;
+                SmoothlyTransitionToPath(currentActivePath, escapeSpeed, isEscape);
+            }
+        }
+    }
+
+    // --- Forced immediate evasion (called by BossCreature when burst damage threshold hit) ---
+
+    public override void ForceImmediateEvasion()
+    {
+        // 1. Check if already on an escape route
+        bool isOnEscapeSpline = false;
+        if (currentActivePath != null)
+        {
+            PathTypeTag pathTag = currentActivePath.GetComponent<PathTypeTag>();
+            if (pathTag != null && pathTag.isEscapeRoute)
+            {
+                isOnEscapeSpline = true;
+            }
+        }
+
+        GameObject targetPath = null;
+        bool targetIsEscape = false;
+
+        if (isOnEscapeSpline)
+        {
+            // Escape to observation/heal if already escaping
+            targetPath = GetObservationPath(PathTypeTag.PathType.Airborne);
+            targetIsEscape = false;
+        }
+        else
+        {
+            // Find closest escape
+            GameObject escapePath = FindNearestEscapeRoute(PathTypeTag.PathType.Airborne);
+
+            // Logic check: avoid flying towards player
+            GameObject playerObj = GameObject.FindGameObjectWithTag("Player");
+            bool isEscapeLogical = true;
+
+            if (escapePath != null && playerObj != null)
+            {
+                float distToEscape = Vector3.Distance(transform.position, escapePath.transform.position);
+                float playerDistToEscape = Vector3.Distance(playerObj.transform.position, escapePath.transform.position);
+
+                if (playerDistToEscape < distToEscape)
+                {
+                    isEscapeLogical = false;
+                    Debug.Log($"[{gameObject.name}] Nearest escape spline is too close to player. Rejecting it.");
+                }
+            }
+
+            if (escapePath != null && isEscapeLogical)
+            {
+                targetPath = escapePath;
+                targetIsEscape = true;
+            }
+        }
+
+        if (targetPath != null)
+        {
+            currentActivePath = targetPath;
+            SmoothlyTransitionToPath(currentActivePath, escapeSpeed, targetIsEscape);
+            Debug.Log($"[{gameObject.name}] Airborne movement smoothly evading to route: {currentActivePath.name}");
+        }
+        else
+        {
+            Debug.LogWarning($"[{gameObject.name}] Tried to evade, but no logical routes found by BossPathManager!");
+
+            // Do not override currentActivePath here so we don't trap it in a null loop,
+            // but we do want to disable follower and let freestyle fallback handle it.
+            if (rootFollower != null) rootFollower.follow = false;
+            isBlending = false;
+            currentActivePath = null; // Clear it so it stops trying to blend to something invalid
+        }
+    }
+
+    // --- Phase change hook (called by BossCreature.ChangePhase) ---
+
+    public override void OnPhaseChanged(int newPhase)
+    {
+        base.OnPhaseChanged(newPhase);
+
+        BossCreature.BossPhase phase = (BossCreature.BossPhase)newPhase;
+
+        switch (phase)
+        {
+            case BossCreature.BossPhase.Orchestrator:
+            case BossCreature.BossPhase.Recharging:
+                // Return to observation loop — pick a fresh path.
+                currentActivePath = null;
+                isFreestylingFallback = false;
+                ExecuteObservationSpline();
+                break;
+
+            case BossCreature.BossPhase.Exhausted:
+                // ForceImmediateEvasion will be called separately by BossCreature.EnterExhaustedPhase.
+                break;
+        }
+    }
+
+    // --- Tether rubber-band ---
 
     private void ApplyTetherRubberBand()
     {
-        SegmentedDragonManager dragonManager = GetComponent<SegmentedDragonManager>();
-        if (dragonManager != null && dragonManager.IsTethered && dragonManager.TetherAnchorTransform != null)
-        {
-            Vector3 anchorPos        = dragonManager.TetherAnchorTransform.position;
-            float   maxRadius        = dragonManager.TetherMaxLength;
-            float   distanceToAnchor = Vector3.Distance(transform.position, anchorPos);
+        // Keep the dragon within the tether radius of the anchor.
+        if (bossBrain == null) return;
 
-            if (distanceToAnchor > maxRadius && maxRadius > 0f)
-            {
-                Vector3 directionFromAnchor = (transform.position - anchorPos).normalized;
-                transform.position = anchorPos + directionFromAnchor * maxRadius;
-            }
+        SegmentedDragonManager dragonBody = GetComponent<SegmentedDragonManager>();
+        if (dragonBody == null || !dragonBody.IsTethered) return;
+
+        Transform anchor = dragonBody.TetherAnchorTransform;
+        float maxLength = dragonBody.TetherMaxLength;
+        if (anchor == null || maxLength <= 0f) return;
+
+        Vector3 toAnchor = anchor.position - transform.position;
+        if (toAnchor.magnitude > maxLength)
+        {
+            // Rubber-band: push root back toward anchor boundary.
+            transform.position = anchor.position - toAnchor.normalized * maxLength;
+            if (rootFollower != null) rootFollower.follow = false;
+            isBlending = false;
         }
     }
 }
