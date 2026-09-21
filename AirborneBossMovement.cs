@@ -29,6 +29,7 @@ public class AirborneBossMovement : BaseBossMovement
 
     // --- TEMPORARY SKETCHED-IN LOGIC STATE ---
     private float temporaryFreestyleTimer = 0f;
+    private bool temporaryForceObservation = false;
 
     // --- Blending State ---
     private bool isBlending = false;
@@ -229,12 +230,9 @@ public class AirborneBossMovement : BaseBossMovement
                         temporaryFreestyleTimer = 4f;
                         break;
                     case 2:
-                        Debug.Log("Sketch Logic: Returning to Observation Spline (Recharging).");
-                        if (bossBrain != null)
-                        {
-                            // Tell the brain we want to recharge, which handles phase-change hooks.
-                            bossBrain.ChangePhase(BossCreature.BossPhase.Recharging);
-                        }
+                        Debug.Log("Sketch Logic: Returning to Observation Spline directly.");
+                        // Bypassing bossBrain so the movement script purely handles the test loop itself.
+                        temporaryForceObservation = true;
                         break;
                 }
             }
@@ -243,6 +241,13 @@ public class AirborneBossMovement : BaseBossMovement
         // Read phase from the BossCreature brain to drive movement decisions.
         bool desiresToEscape = bossBrain != null &&
             (bossBrain.currentPhase == BossCreature.BossPhase.Exhausted);
+
+        // --- TEMPORARY SKETCHED-IN LOGIC ---
+        // If the sketch chose to return to observation, override the brain phase here.
+        if (temporaryForceObservation)
+        {
+            desiresToEscape = false;
+        }
 
         if (desiresToEscape)
         {
