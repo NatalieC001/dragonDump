@@ -25,7 +25,7 @@ Our initial approach proved that Quest Machine could drive AI, but the implement
 
 2. **`DragonActionListeners`**
    - **Role:** Listens for `"DragonActions"` strings broadcast by the Quest Machine Message System.
-   - **The Flaw:** It is heavily coupled. It receives a string, then manually alters phase states in `BossCreature`, triggers attacks on `ElementalBreathController`, and dictates movement on `AirborneBossMovement`.
+   - **The Flaw:** It is heavily coupled. It receives a macro-string like `"Swoop"`, then manually alters phase states in `BossCreature`, triggers attacks on `ElementalBreathController`, and dictates movement on `AirborneBossMovement`.
 
 3. **`BossCreature`**
    - **Role:** Tracks numeric values (Health, Stamina) and an enum state (`BossPhase`).
@@ -43,9 +43,7 @@ Our initial approach proved that Quest Machine could drive AI, but the implement
 
 ## Phase 2: The Optimal Solution (Architectural Evolution)
 
-To fix the coupling and scattered logic, the architecture is being rebuilt into three strictly separated components: **The Container for Body Statistics**, **The Container for Movement Logic**, and **The Central Brain**. 
-
-The goal is to ensure the Quest Machine node graph is the exclusive location where combat logic is processed.
+To fix the coupling and scattered logic, the architecture is being rebuilt into strictly separated components.
 
 ```mermaid
 graph TD
@@ -53,55 +51,76 @@ graph TD
         BV[BossVitals]
     end
 
-    subgraph The Central Brain
-        IDB((IDragonBrain))
-        QMB[QuestMachine Node Graph] -.->|Evaluates conditions & outputs actions| IDB
+    subgraph The Brain System
+        IDB((IDragonBrain Interface))
+        QMB[QuestMachineDragonBrain Adapter] -.->|Implements| IDB
+        QMN[QuestMachine Node Graph Asset] -.->|Evaluated by| QMB
     end
 
     subgraph The Movement Logic
         ABM[BossMotor]
     end
+    
+    subgraph Other Executors
+        EBC[ElementalBreathController]
+        SPW[WaveSpawner]
+    end
 
     %% Sensor Reporting
     BV -- Invokes event: OnHealthThreshold(10) --> IDB
-    BV -- Invokes event: OnStatusApplied(Frozen) --> IDB
     ABM -- Invokes event: OnTetherAttached(AnchorData) --> IDB
     
     %% Brain Orchestration Commands
-    IDB -- Calls method: RequestSplineEvasion() --> ABM
-    IDB -- Calls method: RequestFreestyleIntent(Swoop) --> ABM
+    QMN -- Dispatches Atomic Actions --> QMB
+    QMB -- Calls method: RequestSplineEvasion() --> ABM
+    QMB -- Calls method: FireBreath(Player) --> EBC
 ```
 
 ### Technical Responsibilities & Data Flow
 
-To eliminate ambiguity, here is exactly what each script does and how data passes between them.
-
 #### 1. The Body Statistics (`BossVitals`)
 - **Role:** A data container for floats (Health, Stamina) and enums (Status Effects).
 - **What it does:** It runs the math when damage is taken. When a value crosses a specific threshold (e.g., Stamina drops to 0), it invokes a C# event. It contains zero logic for deciding how the boss should react to that damage.
-- **Example Flow:** 
-  - Player shoots an Ice Arrow.
-  - `BossVitals` subtracts the float value and sets the status to `Frozen`.
-  - `BossVitals` fires an event: `OnFrozenStatusApplied()`.
 
 #### 2. The Movement Logic (`BossMotor`)
 - **Role:** A script that manipulates `transform.position` and `transform.rotation`.
-- **What it does:** It contains the mathematical formulas required to move the object. It calculates how to orbit a spline, how to lerp towards a target (freestyle), and how to calculate a vector moving away from the player. It does not decide *when* to execute these formulas. It relies entirely on the Central Brain to call its public methods and provide the target destination. 
-- **Example Flow:**
-  - The player successfully attaches a tether to the boss.
-  - `BossMotor` detects the physics collision and fires an event: `OnTetherAttached()`.
-  - It then waits at its current position until a method is called.
+- **What it does:** It contains the mathematical formulas required to move the object (freestyle math, spline math). It relies entirely on public methods being called to provide its target destination. It acts as a spatial sensor, firing events (e.g., `OnTetherAttached()`) when collisions occur.
 
-#### 3. The Central Brain (`IDragonBrain` & `QuestMachineDragonBrain`)
-- **Role:** The script that connects the C# events to the Quest Machine node graph, and connects the Quest Machine outputs to the C# methods. 
-- **What it does:** It subscribes to the events fired by `BossVitals` and `BossMotor`. When an event fires, it updates the corresponding variable inside the Quest Machine's data structures. Quest Machine then evaluates its node conditions. If a condition is met, Quest Machine outputs an Action. The Brain script catches this Action and executes the corresponding public method on the Body or Movement scripts.
-- **Concrete Orchestration Example:**
-  - **Event Received:** `BossVitals` fires `OnHealthThresholdReached(10)`. 
-  - **Brain Processing:** The Brain script updates the `CurrentHealth` variable inside Quest Machine to `10`.
-  - **Quest Machine Evaluation:** A node condition reading `If CurrentHealth < 25` evaluates to true. The graph transitions to the "Desperate" node.
-  - **Action Dispatched:** The "Desperate" node fires an Action string to the Brain script.
-  - **Method Execution:** The Brain script receives the Action string, translates it, and calls `BossMotor.RequestSplineEvasion()`.
+#### 3. The Brain System (De-tangled)
+In Phase 1, the "Brain" was a confusing mix of concepts. In Phase 2, it is strictly separated into three technical parts:
 
-### Summary
+1. **`IDragonBrain` (The Interface):** This is just a C# contract. It guarantees that any class implementing it has methods like `OnDamageTaken(float amount)` and `OnStaminaDepleted()`. `BossVitals` and `BossMotor` only talk to this interface. They do not know Quest Machine exists.
+2. **`QuestMachineDragonBrain` (The Adapter Script):** This is a C# script attached to the boss. It implements `IDragonBrain`. 
+   - **Input:** When `BossVitals` fires an event, this Adapter catches it, and mathematically updates the corresponding "Counter" or "Condition" variables *inside* the Quest Machine API.
+   - **Output:** When Quest Machine executes an action, this Adapter translates that action into public method calls on the Motor and Body scripts.
+3. **The Quest Machine Node Graph (The Logic Data):** This is the visual asset created in the Unity Editor. **This is where the actual combat strategy and decision-making exist.** It continuously evaluates the variables updated by the Adapter. When conditions are met, it changes nodes and outputs Actions back to the Adapter.
 
-By strictly separating these components, we guarantee that **all combat decisions are made inside the Quest Machine graph**. The Body and Movement scripts are reduced to dumb sensors (firing events) and dumb actuators (executing methods), leaving no gaps or inferred logic in the C# codebase.
+---
+
+### Proof of Concept: Uncoupling the Legacy Behaviors
+
+In Phase 1, the `DragonActionListeners` script used a giant, heavily-coupled C# switch statement to parse macro-strings like `"Swoop"` and `"SpawnWave"`. 
+
+To completely remove `DragonActionListeners` without losing functionality, we move the composition of behavior directly into the **Quest Machine Node UI** using **Atomic Custom Actions**. 
+
+Instead of writing C# code that ties systems together, we write small, isolated scripts for Quest Machine (e.g., `SetMotorIntentAction`, `FireWeaponAction`, `SpawnMinionAction`, `SetPhaseAction`). The designer adds these atomic actions to a single Quest Node.
+
+Below is the technical proof of concept demonstrating how the entire list of legacy behaviors from Phase 1 maps identically to uncoupled atomic actions inside the Quest Machine UI.
+
+| Legacy Macro-String | What the Quest Machine Node UI Now Contains (The Atomic Actions List) |
+| :--- | :--- |
+| **"Pursuit"** | 1. `SetPhaseAction(Phase: Engaged)` <br> 2. `SetMotorIntentAction(Intent: Pursue, Target: Player)` |
+| **"Swoop"** | 1. `SetPhaseAction(Phase: Engaged)` <br> 2. `SetMotorIntentAction(Intent: Pursue, Target: Player)` <br> 3. `FireWeaponAction(Type: Fire, Target: Player)` <br> 4. `StartCooldownAction(DesireType: Dominance)` |
+| **"Bank"** | 1. `SetPhaseAction(Phase: Engaged)` <br> 2. `SetMotorIntentAction(Intent: Withdraw, Offset: Up 20m)` |
+| **"Bait" / "Herd" / "Flank"** | 1. `SetPhaseAction(Phase: Engaged)` <br> 2. `SetMotorIntentAction(Intent: Pursue, Target: Player)` |
+| **"SpawnWave"** | 1. `SpawnMinionAction(Intent: AllIn, Target: Player)` <br> 2. `StartCooldownAction(DesireType: Attrition)` |
+| **"Breath"** | 1. `SetPhaseAction(Phase: Engaged)` <br> 2. `FireWeaponAction(Type: Fire, Target: Player)` <br> 3. `StartCooldownAction(DesireType: ElementalAdvantage)` |
+| **"DefendCrystal"** | 1. `RequestSplineAction(PathType: AirborneObservation)` |
+| **"Evade" / "Ride Escape Spline"** | 1. `SetPhaseAction(Phase: Exhausted)` <br> 2. `RequestSplineAction(PathType: AirborneEscape)` |
+| **"Recharging"** | 1. `SetPhaseAction(Phase: Recharging)` |
+| **"Regenerate"** | 1. `SetPhaseAction(Phase: Recharging)` <br> 2. `TriggerRegenerationAction(Target: HealthCrystal)` <br> 3. `RefillMinionReserveAction()` |
+| **"Circle + Spawn Minions"** | 1. `SpawnMinionAction(Intent: Circle, Target: Player)` |
+
+**The Result:** The Boss successfully executes every complex behavior required for combat. However, the `BossMotor` script has absolutely no idea that the `ElementalBreathController` fired or that Minions spawned, and none of them know what the `Phase` is. 
+
+All logic and macro-behavior composition reside 100% inside the Quest Machine node graph, and the C# classes remain fully uncoupled and ignorant of each other.
