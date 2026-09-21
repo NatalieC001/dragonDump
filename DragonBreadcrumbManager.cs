@@ -147,7 +147,8 @@ public class DragonBreadcrumbManager : MonoBehaviour
                 float t = (newer.distanceTraveled - targetDistanceInHistory) / range;
 
                 segment.transform.position = Vector3.Lerp(newer.position, older.position, t);
-                segment.transform.rotation = Quaternion.Slerp(newer.rotation, older.rotation, t);
+                // ROTATION CLEANUP: Rotation is now completely managed by the DragonBodySegmentRippleAnimator script
+                // attached to the visual head, to prevent fighting/jitter over segment rotation.
                 break;
             }
         }
