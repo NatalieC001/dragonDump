@@ -14,78 +14,6 @@ The Quest Machine UI is disabled. The `DragonBrainController` loads this "quest"
 
 ---
 
-## Combat Dynamics & Objectives: Player vs. Dragon
-
-Before delving into the technical architecture, it is critical to understand the overarching design of the fight. The entire game hinges on two opposing sets of priorities. The Player and the Dragon are engaged in a war of attrition over supply lines.
-
-**The Player wants to:**
-- Destroy the Power Crystals — the main objective. Each crystal is a lifeline to the Dragon.
-- Pick off minions — the secondary objective. Every minion killed steals a small amount of power from the Dragon.
-- Force the Dragon into a state where it can't recharge — no crystals, no minions, no recovery.
-- Survive long enough to do all three.
-
-**The Dragon wants to:**
-- Protect the Power Crystals — they're the reason it can keep regenerating segments and health.
-- Keep its minion count up — the pack feeds it.
-- Corral the player with Dark Spirit Clouds — shrink the arena, obscure itself and its minions, weaken the player's attacks.
-- Kill the player before the player cuts the supply lines.
-- When the player threatens a crystal, pivot *everything* to defending it — minions, breath, body.
-
-The two sides are in direct opposition. The player's priorities are the Dragon's priorities, inverted. 
-
-To visualize how these mechanics play out systemically, here are two flowcharts representing the fight from each perspective.
-
-### The Player's Point of View
-
-```mermaid
-graph TD
-    StartPlayer((Player Spawns)) --> AssessArena[Assess Arena Threats]
-    AssessArena --> ThreatenCrystal[Target Power Crystals]
-    AssessArena --> PickOffMinions[Hunt Minion Pack]
-    
-    PickOffMinions -->|Minions Die| StarveDragon[Starve Dragon of Pack Power]
-    ThreatenCrystal -->|Crystal Damaged| TriggerDragonDefenses[Trigger Massive Dragon Retaliation]
-    
-    TriggerDragonDefenses --> Survive[Survive Swoops & Breath Attacks]
-    Survive --> DestroyCrystal[Destroy Power Crystal]
-    
-    DestroyCrystal -->|Crystals Gone| ForceVulnerability[Force Dragon into Vulnerable State]
-    StarveDragon -->|Minions Gone| ForceVulnerability
-    
-    ForceVulnerability -->|No Recovery Left| DefeatDragon((Defeat Dragon))
-    
-    %% Obstacles
-    AssessArena -.->|Avoid| Clouds[Dark Spirit Clouds]
-    Clouds -.->|Debuffs| ShrinkArena(Shrinks Arena & Weakens Attacks)
-```
-
-### The Dragon's Point of View (Orchestrated by the Brain)
-
-```mermaid
-graph TD
-    StartDragon((Dragon Brain Evaluates)) --> CheckSupplyLines[Assess Crystals & Minions]
-    
-    CheckSupplyLines --> IsCrystalSafe{Is Crystal Threatened?}
-    IsCrystalSafe -- Yes (Taking Damage) --> PivotToDefense[Pivot ALL Resources to Defense]
-    IsCrystalSafe -- No --> ManagePack{Is Pack Healthy?}
-    
-    PivotToDefense --> CommandBody[Body: Bodyblock Crystal]
-    PivotToDefense --> CommandBreath[Breath: Target Player at Crystal]
-    PivotToDefense --> CommandMinions[Minions: Swarm Crystal Area]
-    
-    ManagePack -- Low Minions --> SpawnMinions[Action: Spawn Wave]
-    ManagePack -- Healthy --> CorralPlayer[Action: Corral Player]
-    
-    CorralPlayer --> CastClouds[Cast Dark Spirit Clouds]
-    CastClouds -->|Limits Player Space| ExecuteAttack[Action: Attack / Swoop]
-    
-    CommandBody --> ProtectRecovery[Ensure Capability to Regenerate]
-    SpawnMinions --> ProtectRecovery
-    ProtectRecovery --> KillPlayer((Kill Player))
-```
-
----
-
 ## Phase 1: The First Attempt (Current Implementation)
 
 Our initial approach proved that Quest Machine could drive AI, but the implementation tightly coupled systems and mixed class responsibilities. Every flaw in this design has been addressed by the new architecture.
@@ -168,189 +96,78 @@ In Phase 1, the "Brain" was a confusing mix of concepts. In Phase 2, it is stric
 
 ---
 
-## External Signals & The Priority Logic Loop
+## The Complete Master Logic: Unifying Reactive and Proactive Tactics
 
-To truly decouple the system, the Brain (Quest Machine) must rely heavily on **Outside Information** imported from the scene environment. The dragon does not magically know everything; it relies on signals sent from environmental sensors to calculate its priorities.
+To truly understand how this architecture pulls everything together, we must look at the **Master Priority Logic** inside the Quest Machine node graph. 
 
-These external signals create a **Logic Loop**:
-1. An outside scene element sends a signal.
-2. The Adapter imports it into Quest Machine.
-3. The Dragon evaluates its priority based on its internal stats (Health/Minions) vs. the external environment.
-4. The Dragon acts to manipulate the environment.
+The dragon does not just react to being hit; it proactively "thinks" about its environment. It evaluates Line of Sight (LOS), VR walking space, environmental hazards, and minion positioning to formulate a strategy.
 
-Below is a diagram explicitly showing how outside information flows into the Brain to drive these priority decisions.
+The Quest Machine evaluates variables imported from the environment in a strict hierarchical order: **Survival -> Tactical Control -> Preparation -> Execution**.
+
+Below is the unified Master Logic diagram showing how the dragon makes priority decisions.
 
 ```mermaid
 graph TD
-    subgraph The Outside World (External Scene Sensors)
-        Crystal[Power Crystal]
-        VRArena[VR Walking Space Sensor]
-        ToppleNode[Topple-able Environment Object]
-        MinionSpots[Hidden Ambush Nodes]
-    end
-
-    subgraph The Adapter
-        QMB[QuestMachineDragonBrain]
-    end
-
-    subgraph Quest Machine Priority Logic Loop
-        PriorityEval{Evaluate Combined State}
-        
-        PriorityEval -->|Crystal Damaged| LogicDefend[Logic: Pivot to Defense]
-        PriorityEval -->|Player Space High| LogicCorral[Logic: Shrink Arena]
-        PriorityEval -->|Objects Available| LogicObscure[Logic: Topple to Block View]
-        PriorityEval -->|Ambush Ready| LogicSpawn[Logic: Create Wave]
-    end
-
-    subgraph Action Executors
-        Motor[BossMotor]
-        Spawner[WaveSpawner]
-        Breath[ElementalBreathController]
-    end
-
-    %% External Signals Flowing IN
-    Crystal -- Signal: "I am taking damage!" --> QMB
-    VRArena -- Signal: "Player has 15sqm of safe space" --> QMB
-    ToppleNode -- Signal: "I can be struck to block movement" --> QMB
-    MinionSpots -- Signal: "Ambush locations are unoccupied" --> QMB
+    Idle[Evaluate AI State] --> Priority1
     
-    %% Adapter Imports to Logic
-    QMB -- Updates Variables --> PriorityEval
+    %% Priority 1: Survival (Reactive)
+    subgraph 1. Survival Checks (Reactive)
+        Priority1{Is Crystal Threatened?}
+        Priority1 -- Yes --> Defend[Action: Defend Crystal]
+        Priority1 -- No --> ThreatCheck{Health/Stamina Critical?}
+        ThreatCheck -- Yes --> EvadeRegen[Action: Evade & Regenerate]
+    end
     
-    %% Logic drives Execution (Output)
-    LogicDefend -- Action: Defend Crystal --> Motor
-    LogicCorral -- Action: Cast Clouds --> Breath
-    LogicObscure -- Action: Strike Pillar --> Motor
-    LogicSpawn -- Action: Spawn Minions --> Spawner
+    %% Priority 2: Tactical Environmental Control (Proactive)
+    subgraph 2. Tactical Control (Proactive)
+        ThreatCheck -- No --> CheckSpace{Player has clear LOS <br> OR large walking area?}
+        CheckSpace -- Yes --> ToppleCheck{Are pillars/columns <br> available near player?}
+        ToppleCheck -- Yes --> Topple[Action: Topple Column <br> to restrict space/vision]
+        ToppleCheck -- No --> Clouds[Action: Cast Dark Spirit Clouds]
+    end
+    
+    %% Priority 3: Ambush Preparation (Proactive)
+    subgraph 3. Ambush Preparation
+        CheckSpace -- No (Player is Obscured) --> SpawnCheck{Do I have stored <br> waves in hiding?}
+        SpawnCheck -- No --> SpawnHidden[Action: Spawn Minions <br> in obscured/safe zones]
+    end
+    
+    %% Priority 4: Execution
+    subgraph 4. Aggressive Execution
+        SpawnCheck -- Yes --> FinalCharge[Action: Coordinated Final Charge <br> Swoop + Swarm]
+    end
+    
+    Defend -->|Action Complete| Idle
+    EvadeRegen -->|Action Complete| Idle
+    Topple -->|Action Complete| Idle
+    Clouds -->|Action Complete| Idle
+    SpawnHidden -->|Action Complete| Idle
+    FinalCharge -->|Action Complete| Idle
 ```
 
-### Explaining the External Signal Loops
+### Explaining the Thought Process
 
-#### 1. The Power Crystal Loop
-- **The External Signal:** The crystal object in the scene detects collision from a player's arrow. It broadcasts a decoupled event: `OnCrystalDamaged`.
-- **The Brain's Priority:** The Adapter hears this and updates `IsCrystalThreatened = True`. The Quest Machine logic evaluates: "My health is fine, but my lifeline is dying." It drops all other priorities, transitioning the state machine to defense.
+To make this logic work, the C# Adapter translates environmental feedback into Quest Machine variables. The Dragon then steps through its priorities.
 
-#### 2. The VR Walking Space Loop
-- **The External Signal:** A spatial sensor grid in the arena calculates how much physical walking space the VR player currently has. It broadcasts: `AvailablePlayerSpace = 15`.
-- **The Brain's Priority:** The Adapter feeds this integer into Quest Machine. The logic evaluates: "The player has too much room to dodge." The dragon prioritizes shrinking the arena, transitioning to a state that casts Dark Spirit Clouds to close up those safe spaces.
+#### 1. Survival (Reactive)
+Before doing anything else, the Dragon must secure its supply lines. 
+- **The Evaluation:** The Brain checks `IsCrystalThreatened` and `IsHealthCritical`.
+- **The Decision:** If its life or its crystal is in danger, it drops all tactical planning to aggressively **Defend the Crystal** or retreat to **Regenerate**.
 
-#### 3. The Topple Object Loop
-- **The External Signal:** Static pillars or debris in the scene broadcast their state: `CanBeToppled = True`. 
-- **The Brain's Priority:** If the Dragon determines the player has clear line-of-sight to the crystals, it reads this signal and transitions to a state where it attacks the pillar instead of the player, dynamically altering the platform geometry to make the player's life harder.
+#### 2. Tactical Control (Proactive Thinking)
+If the Dragon is safe, it begins evaluating the arena geometry to put the player at a disadvantage.
+- **The Evaluation:** The Brain checks the spatial variables: `PlayerWalkableArea` and `PlayerHasLineOfSight`.
+- **The Decision:** If the player can move freely and see everything, the Dragon decides to strip those advantages. It checks `ColumnsAvailable`. If true, it executes an action to **Topple a Column**, cutting off player movement and creating a visual obstruction. If no columns are left, it casts **Dark Spirit Clouds** to achieve the same result.
 
-#### 4. The Minion Ambush Loop
-- **The External Signal:** Hidden nodes in the scene (e.g., caves or dark corners) broadcast their status: `ReadyForAmbush = True`.
-- **The Brain's Priority:** The Dragon checks its internal stats (`CurrentMinionCount < 3`). Because it needs power, it prioritizes a wave spawn, but uses the external signal to direct the `WaveSpawner` to use those specific hidden scene nodes, maximizing the tactical advantage.
+#### 3. Ambush Preparation
+Once the player's movement and vision are crippled, the Dragon uses that opportunity to prepare an overwhelming assault.
+- **The Evaluation:** The Brain confirms the player is restricted (`PlayerWalkableArea < Threshold`). It then checks `StoredAmbushWavesReady`.
+- **The Decision:** If it doesn't have an ambush ready, it executes the **Spawn Hidden Waves** action. Because the player's vision is blocked by the collapsed column or clouds, these minions spawn in untouchable safety.
 
----
+#### 4. Coordinated Execution
+- **The Evaluation:** The Dragon is healthy, the player is boxed in and blinded, and the ambush waves are fully staged.
+- **The Decision:** The conditions are perfect. The node transitions to the **Coordinated Final Charge**. The Dragon commands the stored minion waves to attack while simultaneously executing a heavy **Swoop**, catching the restricted player in a devastating crossfire.
 
-### Understanding the Sequence: How Events Drive the Node Graph
+### Conclusion
 
-To fully grasp how this decoupled architecture works with Quest Machine, it is crucial to understand the chronological sequence of events. A static flowchart shows the *states*, but a **sequence diagram** shows *time*.
-
-The C# classes (`BossVitals`, `BossMotor`) are completely ignorant of Quest Machine. They only shout into the void (fire C# events). The `QuestMachineDragonBrain` (Adapter) listens to those shouts and updates variables in Quest Machine. Quest Machine then evaluates those variables under the hood, transitions nodes, and spits actions back out.
-
-Here is the exact timeline of a single decision (e.g., Evading due to low stamina):
-
-```mermaid
-sequenceDiagram
-    participant Player
-    participant Body as BossVitals (C#)
-    participant Adapter as QuestMachineDragonBrain (C#)
-    participant QuestMachine as Node Graph Logic (PixelCrushers API)
-    participant Motor as BossMotor (C#)
-
-    Player->>Body: Attacks Boss (Stamina Drops to 0)
-    
-    note over Body: Body contains no logic to evade.
-    Body->>Adapter: Fires Event: OnStaminaDepleted()
-    
-    note over Adapter: Adapter acts as translator.
-    Adapter->>QuestMachine: Updates Variable: "StaminaCounter = 0"
-    
-    note over QuestMachine: Quest Machine runs its internal Update loop.
-    QuestMachine->>QuestMachine: Evaluates Conditions on Active Node
-    QuestMachine->>QuestMachine: Condition Met: "If StaminaCounter == 0"
-    QuestMachine->>QuestMachine: Transitions to "Evade" Node
-    
-    note over QuestMachine: Evade Node becomes Active.
-    QuestMachine-->>Adapter: Outputs Atomic Action: RequestSplineAction(Escape)
-    
-    note over Adapter: Adapter translates action back to C#.
-    Adapter->>Motor: Calls Method: RequestSplineEvasion()
-    
-    note over Motor: Motor executes the math to fly to spline.
-    Motor-->>Player: Boss flies away from Player
-```
-
-#### Detailed Breakdown of Node Evaluations (The Full Life Cycle)
-The sequence above shows the flow of time. Below is the comprehensive, static map of the nodes themselves, showing how the variables (updated by the Adapter in step 3 above) dictate the transitions. This covers the *entire* life cycle of the boss.
-
-```mermaid
-graph TD
-    Idle[Idle Orchestrating] -->|Player Enters Arena| Eval[Evaluate Combat Priorities]
-    
-    %% Priority 1: Survival & Regeneration
-    Eval --> CheckRegen{Needs Health/Stamina <br> AND <br> Crystal Available?}
-    CheckRegen -- True --> Regen[Regenerate]
-    CheckRegen -- False --> CheckCrystal{Is Crystal Threatened?}
-    
-    %% Priority 2: Defense
-    CheckCrystal -- True --> Defend[Defend Crystal]
-    CheckCrystal -- False --> CheckThreat{Threat >= 100 <br> OR <br> Stamina == 0?}
-    
-    %% Priority 3: Evasion
-    CheckThreat -- True --> Evade[Evade]
-    CheckThreat -- False --> CheckMinions{Minion Count < 3 <br> AND <br> Cooldown Ready?}
-    
-    %% Priority 4: Pack Management
-    CheckMinions -- True --> Spawn[Spawn Minions]
-    CheckMinions -- False --> CheckBreath{Player Dist < 20m <br> AND <br> Breath Ready?}
-    
-    %% Priority 5: Ranged Attack
-    CheckBreath -- True --> Breath[Breath Attack]
-    CheckBreath -- False --> CheckBait{Threat < 50 <br> AND <br> Time Passivity > 5s?}
-    
-    %% Priority 6: Positioning
-    CheckBait -- True --> Bait[Bait and Herd]
-    CheckBait -- False --> CheckSwoop{Threat < 50 <br> AND <br> Player Dist > 30m?}
-    
-    %% Priority 7: Melee Aggression
-    CheckSwoop -- True --> Swoop[Swoop]
-    CheckSwoop -- False --> Attack[Attack]
-    
-    %% Return Paths (Action Completed triggers evaluation again)
-    Regen -->|Health/Stamina Replenished| Eval
-    Defend -->|Action Completed| Eval
-    Evade -->|Stamina Replenished| Eval
-    Spawn -->|Action Completed| Eval
-    Breath -->|Action Completed| Eval
-    Bait -->|Action Completed| Eval
-    Swoop -->|Action Completed| Eval
-    Attack -->|Action Completed| Eval
-```
-
----
-
-### Proof of Concept: Uncoupling the Legacy Behaviors
-
-To completely remove `DragonActionListeners` without losing functionality, we move the composition of behavior directly into the **Quest Machine Node UI** using **Atomic Custom Actions**. 
-
-In Phase 1, there was a lot of redundancy in the behavior names (e.g., "Bank" and "Swoop" were nearly identical, "Recharging" and "Regenerate" were duplicates). In the new architecture, we have tidied up these behaviors, giving them their real, intuitive names, and ensuring the entire life cycle of the creature is covered.
-
-Below is the technical proof of concept demonstrating how the cleaned-up list of behaviors maps to uncoupled atomic actions inside the Quest Machine UI.
-
-| The Cleaned-Up Behavior Name | What the Quest Machine Node UI Executes (The Atomic Actions List) |
-| :--- | :--- |
-| **Attack** *(formerly Pursuit)* | 1. `SetPhaseAction(Phase: Engaged)` <br> 2. `SetMotorIntentAction(Intent: Pursue, Target: Player)` |
-| **Swoop** *(merged with Bank)* | 1. `SetPhaseAction(Phase: Engaged)` <br> 2. `SetMotorIntentAction(Intent: Pursue, Target: Player)` <br> 3. `FireWeaponAction(Type: Fire, Target: Player)` <br> 4. `StartCooldownAction(DesireType: Dominance)` |
-| **Bait & Herd** *(merged Flank/Bait/Herd)* | 1. `SetPhaseAction(Phase: Engaged)` <br> 2. `SetMotorIntentAction(Intent: Pursue, Target: Player)` |
-| **Spawn Minions** *(merged SpawnWave/Circle)* | 1. `SpawnMinionAction(Intent: AllIn, Target: Player)` <br> 2. `StartCooldownAction(DesireType: Attrition)` |
-| **Breath Attack** | 1. `SetPhaseAction(Phase: Engaged)` <br> 2. `FireWeaponAction(Type: Fire, Target: Player)` <br> 3. `StartCooldownAction(DesireType: ElementalAdvantage)` |
-| **Defend Crystal** | 1. `SetPhaseAction(Phase: Engaged)` <br> 2. `RequestSplineAction(PathType: AirborneObservation)` |
-| **Evade** | 1. `SetPhaseAction(Phase: Exhausted)` <br> 2. `RequestSplineAction(PathType: AirborneEscape)` |
-| **Regenerate** *(merged Recharging/Regenerate)* | 1. `SetPhaseAction(Phase: Recharging)` <br> 2. `RequestSplineAction(PathType: AirborneObservation)` <br> 3. `TriggerHealthRegenAction(Target: NearestCrystal)` <br> 4. `TriggerSegmentRegrowthAction()` <br> 5. `RefillMinionReserveAction()` |
-
-**The Result:** The Boss successfully executes every complex behavior required for its life cycle—including regrowing body segments and recovering health. However, the `BossMotor` script has absolutely no idea that the `ElementalBreathController` fired or that segments grew back. 
-
-All logic and macro-behavior composition reside 100% inside the Quest Machine node graph, and the C# classes remain fully uncoupled and ignorant of each other.
+By using this unified priority hierarchy, the Quest Machine node graph pulls all of the disjointed systems together. The C# scripts simply provide the raw data (Sensor: "Pillar is here", "Player is here"). The Node Editor processes that data to form a highly intelligent, proactive tactical strategy, achieving complete decoupling without sacrificing AI depth.
