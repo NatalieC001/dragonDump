@@ -20,6 +20,10 @@ public class LevelAdvanceGong : MonoBehaviour, IArrowTarget
     private float hitCooldown = 3.0f;
     private float lastHitTime = -10f; // Track time to avoid Coroutines/Invoke
 
+    [Header("Editor Testing")]
+    [Tooltip("Check this box in Play Mode to instantly simulate an arrow hit.")]
+    public bool triggerGongNow = false;
+
     private void Awake()
     {
         audioSource = GetComponent<AudioSource>();
@@ -37,6 +41,20 @@ public class LevelAdvanceGong : MonoBehaviour, IArrowTarget
         {
             isCoolingDown = false;
         }
+
+        // Editor testing toggle
+        if (triggerGongNow)
+        {
+            triggerGongNow = false;
+            TriggerGongFromEditor();
+        }
+    }
+
+    [ContextMenu("Trigger Gong Now")]
+    public void TriggerGongFromEditor()
+    {
+        Debug.Log("[LevelAdvanceGong] Triggered from Editor! Simulating arrow hit.");
+        OnArrowHit(0f, transform.position, ElementTypeOB7.Normal);
     }
 
     /// <summary>
