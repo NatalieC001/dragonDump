@@ -88,7 +88,7 @@ graph TD
 
 ## Phase 1: The First Attempt (Current Implementation)
 
-Our initial approach proved that Quest Machine could drive AI, but the implementation tightly coupled systems and mixed class responsibilities.
+Our initial approach proved that Quest Machine could drive AI, but the implementation tightly coupled systems and mixed class responsibilities. Every flaw in this design has been addressed by the new architecture.
 
 ### The Components
 
@@ -98,18 +98,17 @@ Our initial approach proved that Quest Machine could drive AI, but the implement
 2. **`DragonActionListeners`**
    - **Role:** Listens for `"DragonActions"` strings broadcast by the Quest Machine Message System.
    - **The Flaw:** It is heavily coupled. It receives a macro-string like `"Swoop"`, then manually alters phase states in `BossCreature`, triggers attacks on `ElementalBreathController`, and dictates movement on `AirborneBossMovement`.
+   - **The Solution:** The `DragonActionListeners` script is deleted entirely. In the new system, we use Atomic Custom Actions inside the Quest Machine UI. A "Swoop" node now simply fires three independent actions (`SetPhase`, `SetMotorIntent`, `FireWeapon`), allowing the behaviors to execute simultaneously without the C# scripts ever referencing or knowing about each other.
 
 3. **`BossCreature`**
    - **Role:** Tracks numeric values (Health, Stamina) and an enum state (`BossPhase`).
    - **The Flaw:** It mixes variable tracking with combat logic overrides. For example, in its `Update()` loop, if stamina hits zero, it triggers a function to force an evasion. This bypasses the Quest Machine entirely, splitting the AI logic into two separate locations.
+   - **The Solution:** We replace this with `BossVitals`. When stamina hits zero in the new system, it merely fires an `OnStaminaDepleted()` event. The Quest Machine receives this event, updates its variables, and the Node Graph evaluates the condition to decide what to do. This ensures that 100% of the combat logic is consolidated visibly within the node editor, making the AI predictable and easy to adjust.
 
 4. **`AirborneBossMovement`**
    - **Role:** Moves the transform using flight intents (`Pursue`, `Bank`, `Stillhold`) and spline followers.
    - **The Flaw:** Instead of purely receiving movement coordinates, it contains its own logic checks. It queries `BossCreature.currentPhase` and `BossCreature.GetCurrentHealthPct()` internally to calculate where it should fly. 
-
-### Architectural Flaws
-- **Scattered AI Logic:** The combat logic is split between Quest Machine nodes, `BossCreature` overrides, and `AirborneBossMovement` calculations. 
-- **Coupling:** Classes cannot function independently. Movement relies on Health data, and Health data triggers Movement.
+   - **The Solution:** We replace this with `BossMotor`. The motor is completely stripped of AI queries. It waits for the Brain to provide an intent and a target (e.g., `RequestFreestyleIntent(Pursue, Player)`). This benefits the architecture by making the movement logic entirely reusable for any boss or creature, as it no longer relies on specific boss state variables.
 
 ---
 
@@ -175,23 +174,29 @@ To prove that the decoupled system can handle all combat logic exclusively insid
 
 The C# classes (`BossVitals`, `BossMotor`) only fire events. The `QuestMachineDragonBrain` (Adapter) takes those events and updates integers/booleans inside the Quest Machine asset. The nodes constantly monitor those variables.
 
-Below is a diagram of the Node Graph showing how the variables trigger transitions, followed by concrete explanations of the exact logic.
+Below is a diagram of the Node Graph showing how the variables trigger transitions. (Note: Using `graph TD` with intermediate condition nodes ensures labels do not overlap and the flow remains readable in Obsidian).
 
 ```mermaid
-stateDiagram-v2
-    [*] --> IdleOrchestrating
-
-    IdleOrchestrating --> EvaluateCombat : Player Enters Arena
+graph TD
+    Idle[Idle Orchestrating] -->|Player Enters Arena| Eval[Evaluate Combat]
     
-    EvaluateCombat --> DefendCrystal : IsCrystalThreatened == True
-    EvaluateCombat --> Evade : ThreatLevel >= 100 OR Stamina == 0
-    EvaluateCombat --> BaitAndHerd : ThreatLevel < 50 AND TimeSinceLastDesire > 5s
-    EvaluateCombat --> Swoop : ThreatLevel < 50 AND PlayerDistance < 30m
+    Eval --> CheckCrystal{Is Crystal Threatened?}
+    CheckCrystal -- True --> Defend[Defend Crystal]
+    CheckCrystal -- False --> CheckThreat{Threat >= 100 <br> OR <br> Stamina == 0?}
     
-    DefendCrystal --> EvaluateCombat : Action Completed
-    Evade --> EvaluateCombat : Action Completed (Stamina Replenished)
-    BaitAndHerd --> EvaluateCombat : Action Completed
-    Swoop --> EvaluateCombat : Action Completed
+    CheckThreat -- True --> Evade[Evade]
+    CheckThreat -- False --> CheckBait{Threat < 50 <br> AND <br> Time > 5s?}
+    
+    CheckBait -- True --> Bait[Bait and Herd]
+    CheckBait -- False --> CheckSwoop{Threat < 50 <br> AND <br> Distance < 30m?}
+    
+    CheckSwoop -- True --> Swoop[Swoop Attack]
+    CheckSwoop -- False --> Eval
+    
+    Defend -->|Action Completed| Eval
+    Evade -->|Stamina Replenished| Eval
+    Bait -->|Action Completed| Eval
+    Swoop -->|Action Completed| Eval
 ```
 
 #### How it knows to "Defend the Crystal"
