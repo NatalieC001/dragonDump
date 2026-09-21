@@ -8,15 +8,15 @@ using UnityEngine;
 /// </summary>
 public class DragonHeadWobble : MonoBehaviour
 {
-    [Header("Wobble Settings")]
-    [Tooltip("How fast the head snakes side-to-side.")]
-    public float wobbleFrequency = 3f;
+    [Header("Movement Settings")]
+    [Tooltip("How fast the head swings left and right.")]
+    public float swaySpeed = 3f;
 
-    [Tooltip("How wide the head swings on the local X axis.")]
-    public float positionAmplitude = 0.5f;
+    [Tooltip("How far (in meters) the head physically moves side to side.")]
+    public float sideToSideDistance = 0.5f;
 
-    [Tooltip("How much the head rotates (yaw) during the swing.")]
-    public float rotationAmplitude = 15f;
+    [Tooltip("How much the head twists (in degrees) when it looks left and right.")]
+    public float headTurnAngle = 15f;
 
     [Tooltip("If true, the wobble fades out when the root is moving very slowly (e.g. resting).")]
     public bool scaleWithSpeed = true;
@@ -59,15 +59,15 @@ public class DragonHeadWobble : MonoBehaviour
             speedMultiplier = Mathf.Clamp01(currentSpeed / 5f);
         }
 
-        // Calculate the sine wave based on time
-        float wave = Mathf.Sin(Time.time * wobbleFrequency);
+        // Calculate the swinging motion based on time
+        float wave = Mathf.Sin(Time.time * swaySpeed);
 
-        // Apply local position sway (side to side)
-        Vector3 localOffset = new Vector3(wave * positionAmplitude * speedMultiplier, 0f, 0f);
+        // Move the head side to side
+        Vector3 localOffset = new Vector3(wave * sideToSideDistance * speedMultiplier, 0f, 0f);
         transform.localPosition = initialLocalPosition + localOffset;
 
-        // Apply local rotation sway (yaw)
-        Quaternion rotationOffset = Quaternion.Euler(0f, wave * rotationAmplitude * speedMultiplier, 0f);
+        // Twist the head to look in the direction it is swinging
+        Quaternion rotationOffset = Quaternion.Euler(0f, wave * headTurnAngle * speedMultiplier, 0f);
         transform.localRotation = initialLocalRotation * rotationOffset;
     }
 }
