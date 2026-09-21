@@ -16,7 +16,7 @@ The Quest Machine UI is disabled. The `DragonBrainController` loads this "quest"
 
 ## Combat Dynamics & Objectives: Player vs. Dragon
 
-Before delving into the technical architecture, it is critical to understand the overarching design of the fight. The entire game hinges on two opposing sets of priorities. The Player and the Dragon are engaged in a war of attrition over supply lines.
+Before delving into the technical architecture, it is critical to understand the overarching design of the fight. The entire game hinges on two opposing sets of priorities. The Player and the Dragon are engaged in a war of attrition over supply lines and territorial control.
 
 **The Player wants to:**
 - Destroy the Power Crystals — the main objective. Each crystal is a lifeline to the Dragon.
@@ -26,14 +26,11 @@ Before delving into the technical architecture, it is critical to understand the
 
 **The Dragon wants to:**
 - Protect the Power Crystals — they're the reason it can keep regenerating segments and health.
-- Keep its minion count up — the pack feeds it.
-- Corral the player with Dark Spirit Clouds or Sticky Traps — shrink the arena, obscure itself and its minions, weaken the player's attacks.
+- **Maintain Territorial Control — shrink the arena and dictate the player's movement via Dark Spirit Clouds and Sticky Traps. (Sun Tzu: Control the battlefield, control the outcome).**
+- Keep its minion count up — the pack feeds it and provides tactical pressure.
 - Kill the player before the player cuts the supply lines.
-- When the player threatens a crystal, pivot *everything* to defending it — minions, breath, body.
 
-The two sides are in direct opposition. The player's priorities are the Dragon's priorities, inverted. 
-
-To visualize how these mechanics play out systemically, here are two flowcharts representing the fight from each perspective.
+The two sides are in direct opposition. To visualize how these mechanics play out systemically, here are two flowcharts representing the fight from each perspective.
 
 ### The Player's Point of View
 
@@ -61,27 +58,29 @@ graph TD
 
 ### The Dragon's Point of View (Orchestrated by the Brain)
 
+*Note: A commander does not wait for perfectly healthy forces to exert territorial dominance. Controlling the battlefield is a primary, proactive directive.*
+
 ```mermaid
 graph TD
-    StartDragon((Dragon Brain Evaluates)) --> CheckSupplyLines[Assess Crystals & Minions]
+    StartDragon((Dragon Brain Evaluates)) --> CheckSupplyLines[Assess Crystals & Vitals]
     
-    CheckSupplyLines --> IsCrystalSafe{Is Crystal Threatened?}
-    IsCrystalSafe -- Yes (Taking Damage) --> PivotToDefense[Pivot ALL Resources to Defense]
-    IsCrystalSafe -- No --> ManagePack{Is Pack Healthy?}
+    CheckSupplyLines --> IsCrystalSafe{Is Crystal Threatened <br> OR Vitals Critical?}
+    IsCrystalSafe -- Yes --> PivotToDefense[Pivot ALL Resources to Defense/Regen]
+    
+    %% Sun Tzu: Assert Territorial Control first. Don't wait for a healthy pack.
+    IsCrystalSafe -- No --> ExertTerritorialControl[Proactive Territorial Control]
+    
+    ExertTerritorialControl --> CastHazards[Cast Hazards onto Grid / Topple Columns]
+    CastHazards -->|Player is restricted| EvaluateForces{Is Pack Healthy?}
+    
+    EvaluateForces -- Low Minions --> SpawnMinions[Action: Spawn Special Minions in Hiding]
+    EvaluateForces -- Healthy --> ExecuteAttack[Action: Coordinated Swoop + Swarm Attack]
     
     PivotToDefense --> CommandBody[Body: Bodyblock Crystal]
     PivotToDefense --> CommandBreath[Breath: Target Player at Crystal]
-    PivotToDefense --> CommandMinions[Minions: Swarm Crystal Area]
     
-    ManagePack -- Low Minions --> SpawnMinions[Action: Spawn Wave]
-    ManagePack -- Healthy --> CorralPlayer[Action: Corral Player]
-    
-    CorralPlayer --> CastClouds[Cast Hazards onto Grid]
-    CastClouds -->|Limits Player Space| ExecuteAttack[Action: Attack / Swoop]
-    
-    CommandBody --> ProtectRecovery[Ensure Capability to Regenerate]
-    SpawnMinions --> ProtectRecovery
-    ProtectRecovery --> KillPlayer((Kill Player))
+    SpawnMinions --> EnsureVictory[Setup for Final Charge]
+    ExecuteAttack --> KillPlayer((Kill Player))
 ```
 
 ---
@@ -188,7 +187,7 @@ This separation ensures the Dragon can execute complex staging tactics without r
 
 To truly understand how this architecture pulls everything together, we must look at the **Master Priority Logic** inside the Quest Machine node graph. 
 
-The dragon does not just react to being hit; it proactively "thinks" about its environment. To do this, we attach a **Platform Grid Sensor** to the floor plane (e.g., dividing the arena into a 5x5 grid). This script provides the Dragon with a structural understanding of the battlefield.
+The dragon does not just react to being hit; it proactively "thinks" about its environment in a highly aggressive, Sun Tzu-inspired manner. **Territorial control is the primary win condition.** The Dragon does not wait until its forces are fully healthy to exert dominance over the arena geometry. To do this, we attach a **Platform Grid Sensor** to the floor plane (e.g., dividing the arena into a 5x5 grid). This script provides the Dragon with a structural understanding of the battlefield.
 
 The Quest Machine evaluates variables imported from this Grid Sensor (and other environmental signals) in a strict hierarchical order. **These are four distinct logic loops.** 
 
@@ -196,7 +195,7 @@ The Quest Machine evaluates variables imported from this Grid Sensor (and other 
 
 ```mermaid
 graph TD
-    Idle[Evaluate AI State] --> Loop1
+    Idle[Evaluate AI State] --> IsCrystalThreatened
     
     %% Loop 1: 1. Survival (Reactive)
     subgraph Priority1_Survival [1. Survival Reactive]
@@ -206,8 +205,8 @@ graph TD
         IsHealthCritical -- Yes --> EvadeRegen[Action: Evade & Regenerate]
     end
     
-    %% Loop 2: 2. Tactical Environmental Control (Proactive Thinking)
-    subgraph Priority2_Tactical [2. Tactical Environmental Control Proactive Thinking]
+    %% Loop 2: 2. Territorial Dominance (Proactive Control)
+    subgraph Priority2_Tactical [2. Territorial Dominance]
         IsHealthCritical -- No --> PlayerWalkableCells{PlayerWalkableCells > Threshold?}
         PlayerWalkableCells -- Yes --> ColumnsAvailableNearPlayer{ColumnsAvailableNearPlayer == True?}
         ColumnsAvailableNearPlayer -- Yes --> Topple[Action: Topple Column]
@@ -247,8 +246,8 @@ Before doing anything else, the Dragon must secure its supply lines.
 - **The Evaluation:** The Brain checks `IsCrystalThreatened` and `IsHealthCritical`.
 - **The Decision:** If its life or its crystal is in danger, it drops all tactical planning to aggressively **Defend the Crystal** or retreat to **Regenerate**.
 
-#### 2. Tactical Environmental Control (Proactive Thinking)
-If the Dragon is safe (Loop 1 passed), it begins evaluating the arena geometry via the **Platform Grid Sensor**. 
+#### 2. Territorial Dominance (Proactive Control)
+*Crucially, the Dragon does NOT wait for its minion pack to be fully healthy to take control of the map.* If the Dragon is safe (Loop 1 passed), it immediately begins evaluating the arena geometry via the **Platform Grid Sensor** to establish territorial dominance.
 - **The External Signal:** The grid script tracks exactly which cell (e.g., `Grid[2,2]`) the player is standing on, and which adjacent cells are currently occupied by obstacles or hazards. It broadcasts this state to the Adapter.
 - **The Evaluation:** The Brain checks the spatial variable `PlayerWalkableCells`.
 - **The Decision:** If the grid shows the player has too many open surrounding cells, the Dragon decides to strip those advantages. It checks `ColumnsAvailableNearPlayer`. If true, it executes an action to **Topple a Column**, cutting off player movement in that grid direction and creating a visual obstruction. If no columns are left, it targets specific open coordinates on the grid to cast **Hazards (Cursed Pots/Clouds)** to corral the player.
@@ -266,6 +265,48 @@ Once the player's movement and vision are crippled (Loop 2 passed), the Dragon u
 #### 4. Coordinated Execution
 - **The Evaluation:** The Dragon is healthy (Loop 1), the player is either boxed in or the Dragon's patience has expired (Loops 2/3), and the Special Minion ambush wave is fully staged (`SpecialMinionsAccrued >= RequiredAmount`).
 - **The Decision:** The conditions are perfect for the climax of the battle. The node transitions to the **Coordinated Final Charge**. The Dragon commands the hidden minion waves to emerge and swarm while simultaneously executing a heavy **Swoop** and firing **Elemental Breath**, catching the player in a devastating, multi-directional crossfire. Surviving this brutal wave is the key to advancing the phase.
+
+---
+
+## Dynamic Choreography: How the Battle Evolves
+
+Because the Dragon relies on the player's status and its own resources to determine its flow through the logic loops, **the strategy will dynamically change over the course of the battle.** 
+
+The player's core goals are to destroy crystals and kill minions to make the dragon vulnerable. As those factors change, the entire choreography of the battle naturally shifts without requiring heavily scripted "Phase 2" code.
+
+**Scenario A: The Early Battle (High Resources)**
+- **Variables:** `CrystalsAlive > 0`, `MinionReserves = High`.
+- **Choreography:** The Dragon heavily relies on Loop 1 and Loop 3. It plays conservatively, fleeing to crystals to heal whenever its health dips, and safely spawning minions behind cover. The player is forced to aggressively hunt crystals while dealing with constant waves.
+
+**Scenario B: The Late Battle (Supply Lines Cut)**
+- **Variables:** `CrystalsAlive == 0`, `MinionReserves = Low/Depleted`.
+- **Choreography:** The player has successfully destroyed the crystals and slaughtered the hidden reserves. 
+- **The Shift:** Because there are no crystals left, the `IsCrystalThreatened` and `IsHealthCritical` (which normally triggers Regen) nodes in Loop 1 evaluate to False or execute a failed/desperate path. The Dragon can no longer heal. Because it cannot spawn massive ambush waves, Loop 3 is bypassed. 
+- **The Desperation:** The Dragon is forced permanently into Loop 2 and Loop 4. The fight transforms from a strategic staging battle into a frantic, hyper-aggressive brawl. The Dragon ceaselessly topples pillars, casts clouds, and relentlessly Swoops because it has no other options left. 
+
+This dynamic choreography is the ultimate benefit of the decoupled, node-based system. The Dragon's behavior evolves organically based on the environmental variables the player manipulates, ensuring a satisfying and escalating boss fight.
+
+---
+
+## Adversarial Design Audit: Identifying Exploits and Vulnerabilities
+
+Because the AI's logic is hierarchical and highly structured, clever players will inevitably try to exploit holes in the priority loops to "break" the game or make it trivial. A robust, decoupled architecture must account for these exploits without hardcoding brittle fixes. 
+
+Below is an adversarial analysis of the current Master Logic, identifying potential weaknesses and how our architecture naturally solves or mitigates them.
+
+### Exploit 1: The "Spam the Crystal" Stunlock
+**The Flaw:** If the player constantly shoots the Power Crystal with weak arrows, the Dragon's AI will get trapped in Loop 1 (Survival). Because Loop 1 always preempts Loop 2 (Tactical Control) and Loop 3 (Ambush Preparation), the Dragon would infinitely loop the `Defend Crystal` behavior, never spawning waves or executing a final charge. The player could effectively "stunlock" the boss's AI.
+**The Mitigation:** This is naturally solved by the **Automated Game Waves** (discussed above). While the player is spamming the crystal, the global game manager continues to spawn regular enemies. These enemies will eventually swarm the player, forcing them to turn their attention away from the crystal to survive. This forced split-focus gives the Dragon the breathing room it needs to escape Loop 1 and proceed to tactical planning. 
+
+### Exploit 2: The "Kite and Camp" (Hazard Avoidance)
+**The Flaw:** In Loop 2, the Dragon tries to restrict the player's walkable area. What if a highly skilled player perfectly dodges every Cursed Pot, never gets hit by a Dark Spirit Cloud, and constantly repositions away from columns? The `PlayerWalkableCells` variable will never drop below the threshold required to trigger Loop 3 (Ambush Preparation). The Dragon would get trapped in Loop 2 forever, infinitely throwing pots and never advancing the fight.
+**The Mitigation (The Patience Timer):** As shown in the Master Logic diagram, we introduce a **Patience Timer** fallback. If the Dragon fails to box the player in after a set amount of time, its patience expires. This acts as an OR condition bridging Loop 2 and Loop 3. Even if the player brilliantly evades every hazard, the Dragon will eventually say "enough is enough" and proceed to spawn ambush waves and launch the Final Charge anyway. This ensures progression is guaranteed and rewards the player for surviving the onslaught, rather than punishing them with a stalled game state.
+
+### Exploit 3: The "Safe Corner" (Line of Sight Abuse)
+**The Flaw:** If the player finds a specific corner of the arena grid where pillars cannot be toppled and clouds don't quite reach, they might establish a safe zone where the Final Charge (Loop 4) is ineffective because the Special Minions lack a path to reach them.
+**The Architectural Strength:** Because our system is completely decoupled, fixing this requires zero changes to the C# movement scripts. We simply add a new **Atomic Custom Action** in Quest Machine: `SetMotorIntentAction(Intent: FlushOut)`. We then add a node condition: `If PlayerGridCell == UnreachableZone -> Execute FlushOut`. The Dragon will physically fly to that corner and use a targeted knockback breath attack to force the player back into the central grid. The node graph makes adapting to player exploits fast and visual.
+
+By bashing out these vulnerabilities early, we prove that the hierarchical priority loops—combined with environmental data and global game pressures—create a resilient, fun, and exploitable-proof boss encounter.
 
 ---
 
