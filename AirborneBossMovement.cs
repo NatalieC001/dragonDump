@@ -27,6 +27,9 @@ public class AirborneBossMovement : BaseBossMovement
     private GameObject currentActivePath;
     private SplineFollower rootFollower;
 
+    // --- TEMPORARY SKETCHED-IN LOGIC STATE ---
+    private float temporaryFreestyleTimer = 0f;
+
     // --- Blending State ---
     private bool isBlending = false;
     private float blendTimer = 0f;
@@ -189,6 +192,15 @@ public class AirborneBossMovement : BaseBossMovement
             return;
         }
 
+        // --- TEMPORARY SKETCHED-IN LOGIC: Freestyle Timer ---
+        // If we decided to freestyle temporarily, let it fly and snake around before making a new decision.
+        if (temporaryFreestyleTimer > 0f)
+        {
+            temporaryFreestyleTimer -= Time.deltaTime;
+            ExecuteFreestyleFallback();
+            return;
+        }
+
         // If we reached the end of a non-looping path (like an escape route), detach so we don't repeat it
         if (!isCurrentPathLooping && rootFollower != null && rootFollower.follow)
         {
@@ -197,7 +209,33 @@ public class AirborneBossMovement : BaseBossMovement
             {
                 rootFollower.follow = false;
                 currentActivePath = null;
-                Debug.Log($"[{gameObject.name}] Reached end of linear path. Detaching for next action.");
+                Debug.Log($"[{gameObject.name}] Reached end of linear path. Detaching and selecting next sketch action.");
+
+                // --- TEMPORARY SKETCHED-IN LOGIC: Decision Branching ---
+                // This is purely for testing the game loop and ensuring movement transitions are pretty.
+                // In the future, this will be replaced by the proper Quest Machine AI Brain logic system.
+                int choice = Random.Range(0, 3);
+
+                switch (choice)
+                {
+                    case 0:
+                        Debug.Log("Sketch Logic: Choosing to chain into another Escape Spline.");
+                        // Leaving currentActivePath as null will naturally trigger FindNearestEscapeRoute in the escape choreography.
+                        break;
+                    case 1:
+                        Debug.Log("Sketch Logic: Choosing to Freestyle for 4 seconds to show off flight motion.");
+                        // Allow the fallback flight to take over for a few seconds.
+                        temporaryFreestyleTimer = 4f;
+                        break;
+                    case 2:
+                        Debug.Log("Sketch Logic: Returning to Observation Spline (Recharging).");
+                        if (bossBrain != null)
+                        {
+                            // Tell the brain we want to recharge, which handles phase-change hooks.
+                            bossBrain.ChangePhase(BossCreature.BossPhase.Recharging);
+                        }
+                        break;
+                }
             }
         }
 
@@ -287,18 +325,7 @@ public class AirborneBossMovement : BaseBossMovement
         }
         else
         {
-            // Freestyle fallback: maintain forward momentum but pitch upward smoothly for a swooping flight path
-            Vector3 targetForward = (transform.forward + Vector3.up * 0.5f).normalized;
-            if (targetForward != Vector3.zero)
-            {
-                // Apply undulation to the rotation to create a snaking forward flight path
-                float sway = Mathf.Sin(Time.time * undulationFrequency) * undulationAmplitude;
-                Vector3 snakingForward = targetForward + (transform.right * sway * 0.1f);
-
-                Quaternion upwardRotation = Quaternion.LookRotation(snakingForward.normalized);
-                transform.rotation = Quaternion.Slerp(transform.rotation, upwardRotation, Time.deltaTime * 2f);
-            }
-            transform.position += transform.forward * escapeSpeed * Time.deltaTime;
+            ExecuteFreestyleFallback();
         }
     }
 
@@ -365,5 +392,21 @@ public class AirborneBossMovement : BaseBossMovement
             transform.position = anchor.position - toAnchor.normalized * maxLength;
             if (rootFollower != null) rootFollower.follow = false;
         }
+    }
+
+    private void ExecuteFreestyleFallback()
+    {
+        // Freestyle fallback: maintain forward momentum but pitch upward smoothly for a swooping flight path
+        Vector3 targetForward = (transform.forward + Vector3.up * 0.5f).normalized;
+        if (targetForward != Vector3.zero)
+        {
+            // Apply undulation to the rotation to create a snaking forward flight path
+            float sway = Mathf.Sin(Time.time * undulationFrequency) * undulationAmplitude;
+            Vector3 snakingForward = targetForward + (transform.right * sway * 0.1f);
+
+            Quaternion upwardRotation = Quaternion.LookRotation(snakingForward.normalized);
+            transform.rotation = Quaternion.Slerp(transform.rotation, upwardRotation, Time.deltaTime * 2f);
+        }
+        transform.position += transform.forward * escapeSpeed * Time.deltaTime;
     }
 }
