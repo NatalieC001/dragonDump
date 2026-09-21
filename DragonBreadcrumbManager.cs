@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using Dreamteck.Splines;
 using System.Collections.Generic;
@@ -18,6 +19,31 @@ public class DragonBreadcrumbManager : MonoBehaviour
     private List<PositionData> positionHistory = new List<PositionData>();
     private float headTotalDistance = 0f;
     private SplineComputer bossSpline;
+
+    // Dynamically tracks the visual head so breadcrumbs record the wobble/sway
+    private Transform trackedHead;
+
+    private void Start()
+    {
+        StartCoroutine(FindHeadRoutine());
+    }
+
+    private System.Collections.IEnumerator FindHeadRoutine()
+    {
+        // Wait 2 seconds to guarantee the SegmentedDragonManager has instantiated the pieces
+        yield return new WaitForSeconds(2f);
+
+        Transform foundHead = transform.Find("DragonSegment_0");
+        if (foundHead != null)
+        {
+            trackedHead = foundHead;
+            Debug.Log($"[DragonBreadcrumbManager] Successfully locked tracking onto {trackedHead.name}");
+        }
+        else
+        {
+            Debug.LogWarning("[DragonBreadcrumbManager] Could not find DragonSegment_0 after 2 seconds!");
+        }
+    }
 
     public void InitializeMovement(SplineComputer track, float totalExpectedLength)
     {
@@ -78,7 +104,9 @@ public class DragonBreadcrumbManager : MonoBehaviour
 
     public void UpdateBreadcrumbs(float maxNeededHistoryDistance)
     {
-        Vector3 currentHeadPos = transform.position;
+        Vector3 currentHeadPos = trackedHead != null ? trackedHead.position : transform.position;
+        Quaternion currentHeadRot = trackedHead != null ? trackedHead.rotation : transform.rotation;
+
         if (positionHistory.Count == 0) return;
         PositionData lastData = positionHistory[0];
 
@@ -91,7 +119,7 @@ public class DragonBreadcrumbManager : MonoBehaviour
             positionHistory.Insert(0, new PositionData
             {
                 position = currentHeadPos,
-                rotation = transform.rotation,
+                rotation = currentHeadRot,
                 distanceTraveled = headTotalDistance
             });
 
