@@ -83,7 +83,7 @@ graph TD
    - **Change:** It no longer makes decisions like `ForceImmediateEvasion()`. If stamina hits zero, it simply fires an event (`OnStaminaDepleted`). It makes no decisions; it just holds statistics and takes damage. The name `BossVitals` intuitively clarifies that this is just the statistical shell, not the whole creature.
 
 2. **The Movement Logic (Refactoring `AirborneBossMovement`):**
-   - **Role:** Purely acts as the container for movement execution logic.
+   - **Role:** Purely handles physical locomotion. It knows *how* to move, but lacks the *reason* to move. It knows how to do freestyle flight, how to transition from freestyle onto an escape spline, how to move toward or away from the player, and how to use the splines in the environment. It does not know *why* it is doing those things; it simply executes them.
    - **Change:** It no longer queries the Body Statistics for health or phase. All internal decision logic is removed. It only executes movement logic when commanded by the Brain (e.g., `RequestFreestyleIntent`).
 
 3. **The Brain (`IDragonBrain`):**
