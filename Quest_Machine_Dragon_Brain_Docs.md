@@ -168,6 +168,82 @@ In Phase 1, the "Brain" was a confusing mix of concepts. In Phase 2, it is stric
 
 ---
 
+## External Signals & The Priority Logic Loop
+
+To truly decouple the system, the Brain (Quest Machine) must rely heavily on **Outside Information** imported from the scene environment. The dragon does not magically know everything; it relies on signals sent from environmental sensors to calculate its priorities.
+
+These external signals create a **Logic Loop**:
+1. An outside scene element sends a signal.
+2. The Adapter imports it into Quest Machine.
+3. The Dragon evaluates its priority based on its internal stats (Health/Minions) vs. the external environment.
+4. The Dragon acts to manipulate the environment.
+
+Below is a diagram explicitly showing how outside information flows into the Brain to drive these priority decisions.
+
+```mermaid
+graph TD
+    subgraph The Outside World (External Scene Sensors)
+        Crystal[Power Crystal]
+        VRArena[VR Walking Space Sensor]
+        ToppleNode[Topple-able Environment Object]
+        MinionSpots[Hidden Ambush Nodes]
+    end
+
+    subgraph The Adapter
+        QMB[QuestMachineDragonBrain]
+    end
+
+    subgraph Quest Machine Priority Logic Loop
+        PriorityEval{Evaluate Combined State}
+
+        PriorityEval -->|Crystal Damaged| LogicDefend[Logic: Pivot to Defense]
+        PriorityEval -->|Player Space High| LogicCorral[Logic: Shrink Arena]
+        PriorityEval -->|Objects Available| LogicObscure[Logic: Topple to Block View]
+        PriorityEval -->|Ambush Ready| LogicSpawn[Logic: Create Wave]
+    end
+
+    subgraph Action Executors
+        Motor[BossMotor]
+        Spawner[WaveSpawner]
+        Breath[ElementalBreathController]
+    end
+
+    %% External Signals Flowing IN
+    Crystal -- Signal: "I am taking damage!" --> QMB
+    VRArena -- Signal: "Player has 15sqm of safe space" --> QMB
+    ToppleNode -- Signal: "I can be struck to block movement" --> QMB
+    MinionSpots -- Signal: "Ambush locations are unoccupied" --> QMB
+
+    %% Adapter Imports to Logic
+    QMB -- Updates Variables --> PriorityEval
+
+    %% Logic drives Execution (Output)
+    LogicDefend -- Action: Defend Crystal --> Motor
+    LogicCorral -- Action: Cast Clouds --> Breath
+    LogicObscure -- Action: Strike Pillar --> Motor
+    LogicSpawn -- Action: Spawn Minions --> Spawner
+```
+
+### Explaining the External Signal Loops
+
+#### 1. The Power Crystal Loop
+- **The External Signal:** The crystal object in the scene detects collision from a player's arrow. It broadcasts a decoupled event: `OnCrystalDamaged`.
+- **The Brain's Priority:** The Adapter hears this and updates `IsCrystalThreatened = True`. The Quest Machine logic evaluates: "My health is fine, but my lifeline is dying." It drops all other priorities, transitioning the state machine to defense.
+
+#### 2. The VR Walking Space Loop
+- **The External Signal:** A spatial sensor grid in the arena calculates how much physical walking space the VR player currently has. It broadcasts: `AvailablePlayerSpace = 15`.
+- **The Brain's Priority:** The Adapter feeds this integer into Quest Machine. The logic evaluates: "The player has too much room to dodge." The dragon prioritizes shrinking the arena, transitioning to a state that casts Dark Spirit Clouds to close up those safe spaces.
+
+#### 3. The Topple Object Loop
+- **The External Signal:** Static pillars or debris in the scene broadcast their state: `CanBeToppled = True`.
+- **The Brain's Priority:** If the Dragon determines the player has clear line-of-sight to the crystals, it reads this signal and transitions to a state where it attacks the pillar instead of the player, dynamically altering the platform geometry to make the player's life harder.
+
+#### 4. The Minion Ambush Loop
+- **The External Signal:** Hidden nodes in the scene (e.g., caves or dark corners) broadcast their status: `ReadyForAmbush = True`.
+- **The Brain's Priority:** The Dragon checks its internal stats (`CurrentMinionCount < 3`). Because it needs power, it prioritizes a wave spawn, but uses the external signal to direct the `WaveSpawner` to use those specific hidden scene nodes, maximizing the tactical advantage.
+
+---
+
 ### Understanding the Sequence: How Events Drive the Node Graph
 
 To fully grasp how this decoupled architecture works with Quest Machine, it is crucial to understand the chronological sequence of events. A static flowchart shows the *states*, but a **sequence diagram** shows *time*.
@@ -253,15 +329,6 @@ graph TD
     Swoop -->|Action Completed| Eval
     Attack -->|Action Completed| Eval
 ```
-
-#### Explaining the Priority Evaluations
-1. **Regenerate:** Adapter updates `NeedsHealing` based on `BossVitals` events. Node graph transitions if true.
-2. **Defend Crystal:** Adapter updates `IsCrystalThreatened` based on global level events. Node graph transitions if true.
-3. **Evade:** Adapter updates `ThreatLevel` based on `BossVitals` damage events. Node graph transitions if threat is too high.
-4. **Spawn Minions:** Adapter updates `ActiveMinions` when minions die. Graph spawns more if the pack is depleted.
-5. **Breath Attack:** Adapter updates `PlayerDistance` and `BreathCooldown`. Graph transitions if the player is in close range.
-6. **Bait and Herd:** Adapter updates `TimeSinceLastDesire`. Graph repositions if the boss has been passive for too long.
-7. **Swoop / Attack:** Based on `PlayerDistance` and `ThreatLevel`, the graph chooses between a fast swooping strike or a standard sustained attack.
 
 ---
 
