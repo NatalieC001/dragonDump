@@ -14,6 +14,78 @@ The Quest Machine UI is disabled. The `DragonBrainController` loads this "quest"
 
 ---
 
+## Combat Dynamics & Objectives: Player vs. Dragon
+
+Before delving into the technical architecture, it is critical to understand the overarching design of the fight. The entire game hinges on two opposing sets of priorities. The Player and the Dragon are engaged in a war of attrition over supply lines.
+
+**The Player wants to:**
+- Destroy the Power Crystals — the main objective. Each crystal is a lifeline to the Dragon.
+- Pick off minions — the secondary objective. Every minion killed steals a small amount of power from the Dragon.
+- Force the Dragon into a state where it can't recharge — no crystals, no minions, no recovery.
+- Survive long enough to do all three.
+
+**The Dragon wants to:**
+- Protect the Power Crystals — they're the reason it can keep regenerating segments and health.
+- Keep its minion count up — the pack feeds it.
+- Corral the player with Dark Spirit Clouds — shrink the arena, obscure itself and its minions, weaken the player's attacks.
+- Kill the player before the player cuts the supply lines.
+- When the player threatens a crystal, pivot *everything* to defending it — minions, breath, body.
+
+The two sides are in direct opposition. The player's priorities are the Dragon's priorities, inverted.
+
+To visualize how these mechanics play out systemically, here are two flowcharts representing the fight from each perspective.
+
+### The Player's Point of View
+
+```mermaid
+graph TD
+    StartPlayer((Player Spawns)) --> AssessArena[Assess Arena Threats]
+    AssessArena --> ThreatenCrystal[Target Power Crystals]
+    AssessArena --> PickOffMinions[Hunt Minion Pack]
+
+    PickOffMinions -->|Minions Die| StarveDragon[Starve Dragon of Pack Power]
+    ThreatenCrystal -->|Crystal Damaged| TriggerDragonDefenses[Trigger Massive Dragon Retaliation]
+
+    TriggerDragonDefenses --> Survive[Survive Swoops & Breath Attacks]
+    Survive --> DestroyCrystal[Destroy Power Crystal]
+
+    DestroyCrystal -->|Crystals Gone| ForceVulnerability[Force Dragon into Vulnerable State]
+    StarveDragon -->|Minions Gone| ForceVulnerability
+
+    ForceVulnerability -->|No Recovery Left| DefeatDragon((Defeat Dragon))
+
+    %% Obstacles
+    AssessArena -.->|Avoid| Clouds[Dark Spirit Clouds]
+    Clouds -.->|Debuffs| ShrinkArena(Shrinks Arena & Weakens Attacks)
+```
+
+### The Dragon's Point of View (Orchestrated by the Brain)
+
+```mermaid
+graph TD
+    StartDragon((Dragon Brain Evaluates)) --> CheckSupplyLines[Assess Crystals & Minions]
+
+    CheckSupplyLines --> IsCrystalSafe{Is Crystal Threatened?}
+    IsCrystalSafe -- Yes (Taking Damage) --> PivotToDefense[Pivot ALL Resources to Defense]
+    IsCrystalSafe -- No --> ManagePack{Is Pack Healthy?}
+
+    PivotToDefense --> CommandBody[Body: Bodyblock Crystal]
+    PivotToDefense --> CommandBreath[Breath: Target Player at Crystal]
+    PivotToDefense --> CommandMinions[Minions: Swarm Crystal Area]
+
+    ManagePack -- Low Minions --> SpawnMinions[Action: Spawn Wave]
+    ManagePack -- Healthy --> CorralPlayer[Action: Corral Player]
+
+    CorralPlayer --> CastClouds[Cast Dark Spirit Clouds]
+    CastClouds -->|Limits Player Space| ExecuteAttack[Action: Attack / Swoop]
+
+    CommandBody --> ProtectRecovery[Ensure Capability to Regenerate]
+    SpawnMinions --> ProtectRecovery
+    ProtectRecovery --> KillPlayer((Kill Player))
+```
+
+---
+
 ## Phase 1: The First Attempt (Current Implementation)
 
 Our initial approach proved that Quest Machine could drive AI, but the implementation tightly coupled systems and mixed class responsibilities. Every flaw in this design has been addressed by the new architecture.
@@ -96,6 +168,22 @@ In Phase 1, the "Brain" was a confusing mix of concepts. In Phase 2, it is stric
 
 ---
 
+## Discussion Point: Level Progression Waves vs. Dragon Tactical Minions
+
+A critical architectural distinction must be made regarding how the Dragon spawns minions, and how this affects the core game loop.
+
+Currently, the game's Level Progression relies on a "Clear the Wave" architecture: the level only advances when *all* enemies on the board are destroyed.
+
+If the Dragon spawns standard enemies and hides them intentionally (as part of its tactical strategy), the player will be unable to find them, and the level progression will completely stall. We cannot conflate automated level waves with the Dragon's tactical reserves.
+
+**The Solution:**
+1. **Automated Game Waves:** These are standard, un-strategic enemies designed to keep the player busy. When these are cleared, the game advances to the next wave phase.
+2. **Dragon's Special Minions:** The Dragon must control a distinct, specialized type of minion (its own private spawn pool). These special minions are strategically placed by the Dragon, actively hide, and accrue numbers. **Crucially, the survival of these special minions must NOT block the core Level Progression.** The player can choose to hunt them down to weaken the Dragon's final charge, but failing to find them won't break the game.
+
+This separation ensures the Dragon can execute complex staging tactics without ruining the global game flow.
+
+---
+
 ## The Complete Master Logic: Unifying Reactive and Proactive Tactics
 
 To truly understand how this architecture pulls everything together, we must look at the **Master Priority Logic** inside the Quest Machine node graph.
@@ -111,7 +199,7 @@ graph TD
     Idle[Evaluate AI State] --> Priority1
 
     %% Priority 1: Survival (Reactive)
-    subgraph 1. Survival Checks (Reactive)
+    subgraph Priority1_Survival
         Priority1{Is Crystal Threatened?}
         Priority1 -- Yes --> Defend[Action: Defend Crystal]
         Priority1 -- No --> ThreatCheck{Health/Stamina Critical?}
@@ -119,7 +207,7 @@ graph TD
     end
 
     %% Priority 2: Tactical Environmental Control (Proactive)
-    subgraph 2. Tactical Control (Proactive)
+    subgraph Priority2_Tactical
         ThreatCheck -- No --> CheckSpace{Player has clear LOS <br> OR large walking area?}
         CheckSpace -- Yes --> ToppleCheck{Are pillars/columns <br> available near player?}
         ToppleCheck -- Yes --> Topple[Action: Topple Column <br> to restrict space/vision]
@@ -127,21 +215,21 @@ graph TD
     end
 
     %% Priority 3: Ambush Preparation (Proactive)
-    subgraph 3. Ambush Preparation
+    subgraph Priority3_Preparation
         CheckSpace -- No (Player is Obscured) --> SpawnCheck{Do I have stored <br> waves in hiding?}
-        SpawnCheck -- No --> SpawnHidden[Action: Spawn Minions <br> in obscured/safe zones]
+        SpawnCheck -- No --> SpawnHidden[Action: Spawn Special Minions near Dragon]
     end
 
     %% Priority 4: Execution
-    subgraph 4. Aggressive Execution
-        SpawnCheck -- Yes --> FinalCharge[Action: Coordinated Final Charge <br> Swoop + Swarm]
+    subgraph Priority4_Execution
+        SpawnCheck -- Yes --> FinalCharge[Action: Coordinated Final Charge <br> Swoop + Swarm + Breath]
     end
 
     Defend -->|Action Complete| Idle
     EvadeRegen -->|Action Complete| Idle
     Topple -->|Action Complete| Idle
     Clouds -->|Action Complete| Idle
-    SpawnHidden -->|Action Complete| Idle
+    SpawnHidden -->|Minions Travel to Hiding Spots| Idle
     FinalCharge -->|Action Complete| Idle
 ```
 
@@ -161,12 +249,12 @@ If the Dragon is safe, it begins evaluating the arena geometry to put the player
 
 #### 3. Ambush Preparation
 Once the player's movement and vision are crippled, the Dragon uses that opportunity to prepare an overwhelming assault.
-- **The Evaluation:** The Brain confirms the player is restricted (`PlayerWalkableArea < Threshold`). It then checks `StoredAmbushWavesReady`.
-- **The Decision:** If it doesn't have an ambush ready, it executes the **Spawn Hidden Waves** action. Because the player's vision is blocked by the collapsed column or clouds, these minions spawn in untouchable safety.
+- **The Evaluation:** The Brain confirms the player is restricted (`PlayerWalkableArea < Threshold`). It then checks if enough of its Special Minions have accrued in hiding.
+- **The Decision:** If numbers are low, the Dragon executes an action to **Spawn Special Minions**. These spawn near the Dragon, forcing the player to try and shoot them mid-air. If the minions survive the journey, they tuck themselves into inaccessible, hidden locations within the arena geometry, waiting for the command.
 
 #### 4. Coordinated Execution
-- **The Evaluation:** The Dragon is healthy, the player is boxed in and blinded, and the ambush waves are fully staged.
-- **The Decision:** The conditions are perfect. The node transitions to the **Coordinated Final Charge**. The Dragon commands the stored minion waves to attack while simultaneously executing a heavy **Swoop**, catching the restricted player in a devastating crossfire.
+- **The Evaluation:** The Dragon is healthy, the player is boxed in and blinded, and the Special Minion ambush wave is fully staged and accrued.
+- **The Decision:** The conditions are perfect for the climax of the battle. The node transitions to the **Coordinated Final Charge**. The Dragon commands the hidden minion waves to emerge and swarm while simultaneously executing a heavy **Swoop** and firing **Elemental Breath**, catching the restricted player in a devastating, multi-directional crossfire. Surviving this brutal wave is the key to advancing the phase.
 
 ### Conclusion
 
