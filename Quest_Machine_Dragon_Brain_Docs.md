@@ -136,10 +136,15 @@ graph TD
         SPW[WaveSpawner]
     end
 
+    subgraph Other Executors
+        EBC[ElementalBreathController]
+        SPW[WaveSpawner]
+    end
+
     %% Sensor Reporting
     BV -- Invokes event: OnHealthThreshold(10) --> IDB
     ABM -- Invokes event: OnTetherAttached(AnchorData) --> IDB
-    
+
     %% Brain Orchestration Commands
     QMN -- Dispatches Atomic Actions --> QMB
     QMB -- Calls method: RequestSplineEvasion() --> ABM
