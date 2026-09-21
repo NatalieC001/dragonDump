@@ -18,12 +18,6 @@ public class AirborneBossMovement : BaseBossMovement
     [Tooltip("Speed at which the dragon flies along an escape route.")]
     public float escapeSpeed = 18f;
 
-    [Header("Freestyle Undulation")]
-    [Tooltip("How fast the dragon snakes side-to-side in freestyle/blending air.")]
-    public float undulationFrequency = 3f;
-    [Tooltip("How wide the side-to-side snaking is.")]
-    public float undulationAmplitude = 2f;
-
     private GameObject currentActivePath;
     private SplineFollower rootFollower;
 
@@ -31,14 +25,17 @@ public class AirborneBossMovement : BaseBossMovement
     private float temporaryFreestyleTimer = 0f;
     private bool temporaryForceObservation = false;
 
-    // --- Blending State ---
+    // --- Blending State (Fish Steering) ---
     private bool isBlending = false;
-    private float blendTimer = 0f;
-    private float blendDuration = 1f;
-    private Vector3 blendStartPos;
-    private Quaternion blendStartRot;
     private SplineComputer targetSplineForBlend;
     private float targetFollowSpeedForBlend;
+
+    // Steering parameters
+    [Header("Transition Steering")]
+    [Tooltip("How sharply the dragon turns toward a new flight path.")]
+    public float steeringTurnSpeed = 2f;
+    [Tooltip("Distance threshold to snap onto the target spline.")]
+    public float splineDockingRadius = 2f;
 
     // --- Initialise once the scene is ready ---
     protected override void Awake()
@@ -125,32 +122,14 @@ public class AirborneBossMovement : BaseBossMovement
             return;
         }
 
-        // Instead of instantly snapping, we initiate a blend
+        // Initiate fish-like steering toward the new track
         isBlending = true;
-        blendTimer = 0f;
-        blendStartPos = transform.position;
-        blendStartRot = transform.rotation;
-
         targetSplineForBlend = splineComputer;
         targetFollowSpeedForBlend = speed;
 
-        rootFollower.follow = false; // Disable direct follow while blending
+        rootFollower.follow = false; // Disable rigid track-following until we get there
 
-        // Calculate dynamic duration based on distance and current speed
-        SplineSample sample = new SplineSample();
-        splineComputer.Project(transform.position, ref sample);
-
-        float distance = Vector3.Distance(transform.position, (Vector3)sample.position);
-
-        // Dynamic speed calculation. If it's standing still, use a base speed.
-        float currentSpeed = speed;
-        if (currentSpeed <= 0f) currentSpeed = 10f;
-
-        blendDuration = distance / currentSpeed;
-        if (blendDuration < 0.5f) blendDuration = 0.5f; // Hard floor so it doesn't instantly snap on tiny distances
-
-        // Tell the body manager we are switching splines IMMEDIATELY so it can properly map breadcrumbs
-        // while the head flies toward it, preventing the body segments from freezing rigidly in place.
+        // Immediately inform the body manager of the new path context
         SegmentedDragonManager dragonBody = GetComponent<SegmentedDragonManager>();
         if (dragonBody != null)
         {
@@ -267,31 +246,34 @@ public class AirborneBossMovement : BaseBossMovement
             return;
         }
 
-        blendTimer += Time.deltaTime;
-        float t = Mathf.Clamp01(blendTimer / blendDuration);
-
-        // Smoothstep curve for natural ease-in ease-out, no linear jarring
-        float smoothT = t * t * (3f - 2f * t);
-
-        // Project dynamically so we hit a moving target if the spline is moving, or hit it accurately
+        // 1. Find our waypoint (the nearest point on the target track)
         SplineSample targetSample = new SplineSample();
         targetSplineForBlend.Project(transform.position, ref targetSample);
+        Vector3 targetPos = (Vector3)targetSample.position;
 
-        Vector3 basePosition = Vector3.Lerp(blendStartPos, (Vector3)targetSample.position, smoothT);
-
-        // Add graceful undulation (snaking) so the body trails beautifully
-        float sway = Mathf.Sin(Time.time * undulationFrequency) * undulationAmplitude;
-
-        // Fade out the sway as it approaches the spline to dock perfectly
-        float swayFade = 1f - smoothT;
-
-        transform.position = basePosition + (transform.right * sway * swayFade);
-        transform.rotation = Quaternion.Slerp(blendStartRot, targetSample.rotation, smoothT);
-
-        if (t >= 1f)
+        // 2. Are we close enough to dock?
+        float distanceToTarget = Vector3.Distance(transform.position, targetPos);
+        if (distanceToTarget <= splineDockingRadius)
         {
+            // We have arrived. Snap precisely and engage track-following.
+            transform.position = targetPos;
+            transform.rotation = targetSample.rotation;
             FinalizeSplineAttachment();
+            return;
         }
+
+        // 3. Fish Steering Logic (Continuous forward movement)
+        // Steer toward the waypoint
+        Vector3 directionToTarget = (targetPos - transform.position).normalized;
+        if (directionToTarget != Vector3.zero)
+        {
+            Quaternion targetRotation = Quaternion.LookRotation(directionToTarget);
+            transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, Time.deltaTime * steeringTurnSpeed);
+        }
+
+        // Always push the head forward at the target flight speed (no stalling!)
+        float currentSpeed = targetFollowSpeedForBlend > 0f ? targetFollowSpeedForBlend : 10f;
+        transform.position += transform.forward * currentSpeed * Time.deltaTime;
     }
 
     // --- Observation (looping patrol path) ---
@@ -406,11 +388,7 @@ public class AirborneBossMovement : BaseBossMovement
         Vector3 targetForward = (transform.forward + Vector3.up * 0.5f).normalized;
         if (targetForward != Vector3.zero)
         {
-            // Apply undulation to the rotation to create a snaking forward flight path
-            float sway = Mathf.Sin(Time.time * undulationFrequency) * undulationAmplitude;
-            Vector3 snakingForward = targetForward + (transform.right * sway * 0.1f);
-
-            Quaternion upwardRotation = Quaternion.LookRotation(snakingForward.normalized);
+            Quaternion upwardRotation = Quaternion.LookRotation(targetForward);
             transform.rotation = Quaternion.Slerp(transform.rotation, upwardRotation, Time.deltaTime * 2f);
         }
         transform.position += transform.forward * escapeSpeed * Time.deltaTime;
