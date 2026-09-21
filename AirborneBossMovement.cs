@@ -75,6 +75,7 @@ public class AirborneBossMovement : BaseBossMovement
     private float      dynamicBlendDuration = 2f;
     private Vector3    blendStartPosition;
     private Quaternion blendStartRotation;
+    private SplineSample blendTargetSample;
 
     // Freestyle state
     private FreestyleIntent _currentIntent = FreestyleIntent.Stillhold;
@@ -205,9 +206,18 @@ public class AirborneBossMovement : BaseBossMovement
 
             if (targetSpline != null)
             {
-                SplineSample targetSample = new SplineSample();
-                targetSpline.Project(transform.position, ref targetSample);
-                float distanceToSpline = Vector3.Distance(transform.position, targetSample.position);
+                blendTargetSample = new SplineSample();
+                PathTypeTag pathTag = observationPath.GetComponent<PathTypeTag>();
+                if (pathTag != null && pathTag.isEscapeRoute)
+                {
+                    blendTargetSample = targetSpline.Evaluate(0.0);
+                }
+                else
+                {
+                    targetSpline.Project(transform.position, ref blendTargetSample);
+                }
+
+                float distanceToSpline = Vector3.Distance(transform.position, blendTargetSample.position);
 
                 // Dynamic duration based on distance — no jarring teleport snaps in VR
                 dynamicBlendDuration = distanceToSpline / (baseFlightSpeed > 0 ? baseFlightSpeed : 1f);
@@ -314,16 +324,13 @@ public class AirborneBossMovement : BaseBossMovement
         float t = Mathf.Clamp01(blendTimer / dynamicBlendDuration);
         t = t * t * (3f - 2f * t); // smoothstep
 
-        SplineSample targetSample = new SplineSample();
-        splineFollower.spline.Project(transform.position, ref targetSample);
-
-        transform.position = Vector3.Lerp(blendStartPosition, (Vector3)targetSample.position, t);
-        transform.rotation = Quaternion.Slerp(blendStartRotation, targetSample.rotation, t);
+        transform.position = Vector3.Lerp(blendStartPosition, (Vector3)blendTargetSample.position, t);
+        transform.rotation = Quaternion.Slerp(blendStartRotation, blendTargetSample.rotation, t);
 
         if (t >= 1f)
         {
             currentMode = MovementMode.Spline;
-            splineFollower.SetPercent(targetSample.percent);
+            splineFollower.SetPercent(blendTargetSample.percent);
             splineFollower.follow = true;
         }
     }
@@ -338,15 +345,69 @@ public class AirborneBossMovement : BaseBossMovement
     /// </summary>
     public override void ForceImmediateEvasion()
     {
-        currentActivePath = FindNearestEscapeRoute(PathTypeTag.PathType.Airborne);
+        // 1. Where are we now?
+        bool isOnEscapeSpline = false;
         if (currentActivePath != null)
         {
-            Debug.Log($"[{gameObject.name}] Evading to escape spline: {currentActivePath.name}");
-            RequestGlideToSpline(currentActivePath);
+            PathTypeTag pathTag = currentActivePath.GetComponent<PathTypeTag>();
+            if (pathTag != null && pathTag.isEscapeRoute)
+            {
+                isOnEscapeSpline = true;
+            }
+        }
+
+        // 2. Decide the route based on our current context.
+        GameObject targetRoute = null;
+
+        if (isOnEscapeSpline)
+        {
+            // If already on an escape spline, running away more might not make sense.
+            // Try to find an observation spline to go back to and heal/regroup.
+            targetRoute = GetObservationPath(PathTypeTag.PathType.Airborne);
+            if (targetRoute != null)
+            {
+                Debug.Log($"[{gameObject.name}] Already on Escape Spline. Breaking off to observation path: {targetRoute.name}");
+            }
         }
         else
         {
-            Debug.LogWarning($"[{gameObject.name}] No Airborne escape spline found — withdrawing freestyle.");
+            // Try to find the closest escape spline.
+            GameObject escapeRoute = FindNearestEscapeRoute(PathTypeTag.PathType.Airborne);
+
+            // 3. Logic Check: Are we fleeing *towards* the player?
+            GameObject playerObj = GameObject.FindGameObjectWithTag("Player");
+            bool isEscapeSplineLogical = true;
+
+            if (escapeRoute != null && playerObj != null)
+            {
+                float distToEscapeStart = Vector3.Distance(transform.position, escapeRoute.transform.position);
+                float playerDistToEscapeStart = Vector3.Distance(playerObj.transform.position, escapeRoute.transform.position);
+
+                // If the player is significantly closer to the escape spline start than we are,
+                // flying to it would mean flying right past the player.
+                if (playerDistToEscapeStart < distToEscapeStart)
+                {
+                    isEscapeSplineLogical = false;
+                    Debug.Log($"[{gameObject.name}] Nearest escape spline is too close to player. Rejecting it.");
+                }
+            }
+
+            if (escapeRoute != null && isEscapeSplineLogical)
+            {
+                targetRoute = escapeRoute;
+                Debug.Log($"[{gameObject.name}] Evading to escape spline: {targetRoute.name}");
+            }
+        }
+
+        // 4. Execute Movement
+        if (targetRoute != null)
+        {
+            RequestGlideToSpline(targetRoute);
+        }
+        else
+        {
+            // Fallback: Freestyle away from the player
+            Debug.LogWarning($"[{gameObject.name}] No logical escape route found — withdrawing freestyle.");
 
             GameObject playerObj = GameObject.FindGameObjectWithTag("Player");
             if (playerObj != null)
