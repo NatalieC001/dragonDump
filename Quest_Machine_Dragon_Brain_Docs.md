@@ -43,11 +43,11 @@ Our initial approach proved that Quest Machine could drive AI, but the engineeri
 
 ## Phase 2: The Optimal Solution (Architectural Evolution)
 
-To resolve the messiness, we must rebuild the architecture with intuitive delineation. A boss logically consists of three distinct concepts: **The Container for Body Statistics**, **The Container for Movement Logic**, and **The Brain**.
+To resolve the messiness, we must rebuild the architecture with intuitive delineation. A boss logically consists of three distinct concepts: **The Container for Body Statistics**, **The Container for Movement Logic**, and **The Central Brain**.
 
 ### Introducing the Triad Architecture
 
-We will rename and restructure the classes to enforce strict boundaries based on these three concepts.
+We will rename and restructure the classes to enforce strict boundaries. The Brain acts as the central orchestrator, while the Body Statistics and Movement Logic act as its sensors and actuators.
 
 ```mermaid
 graph TD
@@ -55,46 +55,57 @@ graph TD
         BV[BossVitals]
     end
 
-    subgraph The Brain
+    subgraph The Orchestrating Brain
         IDB((IDragonBrain))
-        DDB[DefaultDragonBrain] -.->|Implements| IDB
-        QMB[QuestMachineDragonBrain] -.->|Implements| IDB
+        QMB[QuestMachine Node Graph] -.->|Drives| IDB
     end
 
     subgraph The Movement Logic
-        ABM[BossMotor / AirborneBossMovement]
-        EBC[ElementalBreathController]
-        DAL[Action Listeners]
+        ABM[BossMotor]
     end
 
-    %% Event Reporting
-    BV -- Reports Damage/Stamina --> IDB
-    ABM -- Reports Tether/Arrival --> IDB
+    %% Sensor Reporting
+    BV -- "I have 10% health left!" --> IDB
+    BV -- "I am frozen!" --> IDB
+    ABM -- "I am tethered to a rock!" --> IDB
 
-    %% Commands
-    IDB -- Issues Intents --> ABM
-    IDB -- Issues Attack Commands --> EBC
+    %% Brain Orchestration Commands
+    IDB -- "Flee to the escape spline!" --> ABM
+    IDB -- "Swoop at the player!" --> ABM
 ```
 
-### The Clean Responsibilities
+### The Clean Responsibilities & Information Flow
 
-1. **The Body Statistics (Replacing `BossCreature` with `BossVitals`):**
-   - **Role:** Purely acts as the container for the body statistics (Health, Stamina, Status Effects).
-   - **Change:** It no longer makes decisions like `ForceImmediateEvasion()`. If stamina hits zero, it simply fires an event (`OnStaminaDepleted`). It makes no decisions; it just holds statistics and takes damage. The name `BossVitals` intuitively clarifies that this is just the statistical shell, not the whole creature.
+To understand why the Brain must talk to the other two classes, we can look at a concrete example of how they communicate.
 
-2. **The Movement Logic (Refactoring `AirborneBossMovement`):**
-   - **Role:** Purely handles physical locomotion. It knows *how* to move, but lacks the *reason* to move. It knows how to do freestyle flight, how to transition from freestyle onto an escape spline, how to move toward or away from the player, and how to use the splines in the environment. It does not know *why* it is doing those things; it simply executes them.
-   - **Change:** It no longer queries the Body Statistics for health or phase. All internal decision logic is removed. It only executes movement logic when commanded by the Brain (e.g., `RequestFreestyleIntent`).
+#### 1. The Body Statistics (Replacing `BossCreature` with `BossVitals`)
+- **Role:** It acts purely as a sensor and container for numbers (Health, Stamina, Status Effects).
+- **What it does:** It takes damage, and when a threshold is crossed, it notifies the Brain. It makes absolutely no decisions on its own.
+- **Example Flow:**
+  - Player shoots the dragon with an Ice Arrow.
+  - Body Statistics calculates the damage and updates its internal status to "Frozen".
+  - Body Statistics tells the Brain: *"Hey, I just took massive damage and I am currently frozen."*
 
-3. **The Brain (`IDragonBrain`):**
-   - **Role:** The entity's comprehension of the environment, the undisputed master of behavior, and the single source of truth.
-   - **Change:** It receives physical events from the Body Statistics container (e.g., high damage taken) and spatial/world events from the Movement Logic container (e.g., player attached tether, arrived at destination). It processes these inputs and issues commands back to the Body and Movement systems.
+#### 2. The Movement Logic (Refactoring `AirborneBossMovement` into a `BossMotor`)
+- **Role:** It purely handles physical locomotion. It knows *how* to move through the environment, but lacks the *reason* to move.
+- **What it does:** It knows the math to perform freestyle flight, transition onto escape splines, or swoop. It simply waits for orders and executes them. It also acts as a spatial sensor, reporting when environmental changes happen.
+- **Example Flow:**
+  - The player successfully attaches a tether to the dragon.
+  - The Movement Logic tells the Brain: *"Hey, I have been tethered to a rock!"*
+
+#### 3. The Brain (The Central Orchestrator: `IDragonBrain`)
+- **Role:** The entity's comprehension of the environment, the undisputed master of behavior, and the sole decision-maker. It holds the combat strategy (driven by the Quest Machine node graph).
+- **What it does:** It receives the sensor data from the Body and Movement, evaluates that data against its current strategy, and orchestrates a response by commanding the Body and Movement.
+- **Concrete Orchestration Example:**
+  - **Input from Body:** *"Hey, I am currently frozen and have 10% health left!"*
+  - **Brain's Internal Logic (Quest Machine Condition):** "If health < 25% AND status == frozen -> Enter Desperate Evasion State."
+  - **Brain's Orchestration (Output):** The Brain commands the Movement Logic: *"Execute an immediate escape to the nearest spline!"* The Brain also commands the Spawner: *"Spawn defensive minions!"*
 
 ### How Quest Machine Plugs In
 
-With this architecture, the system is fully modular.
-- We can run a `DefaultDragonBrain` (pure C# logic) for simple testing.
-- When we plug in the `QuestMachineDragonBrain` (which implements `IDragonBrain`), it simply pipes the reported events (e.g., `OnStaminaDepleted`, `OnTetherAttached`) directly into the Quest Machine graph as conditions.
-- The Quest Machine nodes process these conditions, transition states, and send action commands out to the pure executors (the Movement Logic and the Body Statistics).
+With this architecture, the system is fully modular and easy to read.
+- The Body Statistics and Movement Logic act as the eyes, ears, and muscles.
+- The `QuestMachineDragonBrain` (which implements `IDragonBrain`) takes the reports (e.g., *"I'm frozen"*, *"I'm tethered"*) and feeds them directly into the Quest Machine graph as conditions.
+- The visual nodes in Quest Machine process these conditions, transition to the appropriate combat state, and send action commands back out to orchestrate the fight.
 
 This optimal solution guarantees that our naming makes intuitive sense, and our visual node graph remains the strict, decoupled master of the boss's behavior.
