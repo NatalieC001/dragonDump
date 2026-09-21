@@ -1,16 +1,88 @@
 # Dragon Boss AI & Quest Machine Integration
 
-## Technical Overview
+## High-Level Concept
 
-This project uses **Quest Machine** (by PixelCrushers) as a visual, node-based **Combat AI State Machine** to control boss behavior (e.g., the Dragon). 
+In this project, we are creatively using **Quest Machine** (a popular asset by PixelCrushers) not for a traditional player-facing quest log, but as a visual, node-based **Combat AI State Machine** for our bosses (e.g., the Dragon). 
 
-Instead of writing state machine logic in C#, the boss's behavior is designed in Quest Machine's node editor. 
+Instead of writing complex, hard-to-maintain state machine logic in C#, we use Quest Machine's node editor to visually design the boss's behavior. 
 
 - **Quest Nodes** represent the **AI States** (e.g., Scan, AttackCrystal, Swoop, ToppleObject, Reposition).
 - **Node Conditions** act as **Transition Rules** (determining when the boss leaves a state and enters another).
 - **Node Actions** define what the boss **executes** when entering or during that state (such as playing an animation, moving, or triggering an attack).
 
 The Quest Machine UI is disabled. The `DragonBrainController` loads this "quest" in the background, and the boss executes it to fight the player. Below is a breakdown of our first iteration, its technical flaws, and the refactored modular architecture we are adopting.
+
+---
+
+## Combat Dynamics & Objectives: Player vs. Dragon
+
+Before delving into the technical architecture, it is critical to understand the overarching design of the fight. The entire game hinges on two opposing sets of priorities. The Player and the Dragon are engaged in a war of attrition over supply lines.
+
+**The Player wants to:**
+- Destroy the Power Crystals — the main objective. Each crystal is a lifeline to the Dragon.
+- Pick off minions — the secondary objective. Every minion killed steals a small amount of power from the Dragon.
+- Force the Dragon into a state where it can't recharge — no crystals, no minions, no recovery.
+- Survive long enough to do all three.
+
+**The Dragon wants to:**
+- Protect the Power Crystals — they're the reason it can keep regenerating segments and health.
+- Keep its minion count up — the pack feeds it.
+- Corral the player with Dark Spirit Clouds — shrink the arena, obscure itself and its minions, weaken the player's attacks.
+- Kill the player before the player cuts the supply lines.
+- When the player threatens a crystal, pivot *everything* to defending it — minions, breath, body.
+
+The two sides are in direct opposition. The player's priorities are the Dragon's priorities, inverted. 
+
+To visualize how these mechanics play out systemically, here are two flowcharts representing the fight from each perspective.
+
+### The Player's Point of View
+
+```mermaid
+graph TD
+    StartPlayer((Player Spawns)) --> AssessArena[Assess Arena Threats]
+    AssessArena --> ThreatenCrystal[Target Power Crystals]
+    AssessArena --> PickOffMinions[Hunt Minion Pack]
+    
+    PickOffMinions -->|Minions Die| StarveDragon[Starve Dragon of Pack Power]
+    ThreatenCrystal -->|Crystal Damaged| TriggerDragonDefenses[Trigger Massive Dragon Retaliation]
+    
+    TriggerDragonDefenses --> Survive[Survive Swoops & Breath Attacks]
+    Survive --> DestroyCrystal[Destroy Power Crystal]
+    
+    DestroyCrystal -->|Crystals Gone| ForceVulnerability[Force Dragon into Vulnerable State]
+    StarveDragon -->|Minions Gone| ForceVulnerability
+    
+    ForceVulnerability -->|No Recovery Left| DefeatDragon((Defeat Dragon))
+    
+    %% Obstacles
+    AssessArena -.->|Avoid| Clouds[Dark Spirit Clouds]
+    Clouds -.->|Debuffs| ShrinkArena(Shrinks Arena & Weakens Attacks)
+```
+
+### The Dragon's Point of View (Orchestrated by the Brain)
+
+```mermaid
+graph TD
+    StartDragon((Dragon Brain Evaluates)) --> CheckSupplyLines[Assess Crystals & Minions]
+    
+    CheckSupplyLines --> IsCrystalSafe{Is Crystal Threatened?}
+    IsCrystalSafe -- Yes (Taking Damage) --> PivotToDefense[Pivot ALL Resources to Defense]
+    IsCrystalSafe -- No --> ManagePack{Is Pack Healthy?}
+    
+    PivotToDefense --> CommandBody[Body: Bodyblock Crystal]
+    PivotToDefense --> CommandBreath[Breath: Target Player at Crystal]
+    PivotToDefense --> CommandMinions[Minions: Swarm Crystal Area]
+    
+    ManagePack -- Low Minions --> SpawnMinions[Action: Spawn Wave]
+    ManagePack -- Healthy --> CorralPlayer[Action: Corral Player]
+    
+    CorralPlayer --> CastClouds[Cast Dark Spirit Clouds]
+    CastClouds -->|Limits Player Space| ExecuteAttack[Action: Swoop / Engage]
+    
+    CommandBody --> ProtectRecovery[Ensure Capability to Regenerate]
+    SpawnMinions --> ProtectRecovery
+    ProtectRecovery --> KillPlayer((Kill Player))
+```
 
 ---
 
@@ -97,9 +169,52 @@ In Phase 1, the "Brain" was a confusing mix of concepts. In Phase 2, it is stric
 
 ---
 
-### Proof of Concept: Uncoupling the Legacy Behaviors
+### The Node-Based Logic: How Decisions Are Made
 
-In Phase 1, the `DragonActionListeners` script used a giant, heavily-coupled C# switch statement to parse macro-strings like `"Swoop"` and `"SpawnWave"`. 
+To prove that the decoupled system can handle all combat logic exclusively inside the visual editor, we must examine exactly how the nodes evaluate variables to transition states. 
+
+The C# classes (`BossVitals`, `BossMotor`) only fire events. The `QuestMachineDragonBrain` (Adapter) takes those events and updates integers/booleans inside the Quest Machine asset. The nodes constantly monitor those variables.
+
+Below is a diagram of the Node Graph showing how the variables trigger transitions, followed by concrete explanations of the exact logic.
+
+```mermaid
+stateDiagram-v2
+    [*] --> IdleOrchestrating
+
+    IdleOrchestrating --> EvaluateCombat : Player Enters Arena
+    
+    EvaluateCombat --> DefendCrystal : IsCrystalThreatened == True
+    EvaluateCombat --> Evade : ThreatLevel >= 100 OR Stamina == 0
+    EvaluateCombat --> BaitAndHerd : ThreatLevel < 50 AND TimeSinceLastDesire > 5s
+    EvaluateCombat --> Swoop : ThreatLevel < 50 AND PlayerDistance < 30m
+    
+    DefendCrystal --> EvaluateCombat : Action Completed
+    Evade --> EvaluateCombat : Action Completed (Stamina Replenished)
+    BaitAndHerd --> EvaluateCombat : Action Completed
+    Swoop --> EvaluateCombat : Action Completed
+```
+
+#### How it knows to "Defend the Crystal"
+1. **The Sensor:** A global level manager or the crystal object itself detects it is taking damage from the player. It invokes an event: `OnCrystalUnderAttack()`.
+2. **The Adapter:** The `QuestMachineDragonBrain` receives this event and updates a Quest Machine boolean variable: `IsCrystalThreatened = True`.
+3. **The Node Graph Logic:** The "EvaluateCombat" node has a condition checking that boolean. Because it is true, the graph immediately transitions to the "DefendCrystal" node.
+4. **The Execution (Atomic Actions):** The "DefendCrystal" node executes its Actions list. It calls `RequestSplineAction(AirborneObservation)` and the boss flies to the crystal.
+
+#### How it knows to "Evade"
+1. **The Sensor:** `BossVitals` calculates that the player just dealt massive burst damage in a short window. It invokes `OnBurstDamageTaken(float amount)`. Alternatively, it detects stamina has reached zero and invokes `OnStaminaDepleted()`.
+2. **The Adapter:** The `QuestMachineDragonBrain` receives these events. It increments a Quest Machine counter: `ThreatLevel += 50`. Or, if stamina is gone, it sets `Stamina = 0`.
+3. **The Node Graph Logic:** The "EvaluateCombat" node has a condition: `If ThreatLevel >= 100 OR Stamina == 0`. When evaluated to true, the graph transitions to the "Evade" node.
+4. **The Execution (Atomic Actions):** The "Evade" node executes `RequestSplineAction(AirborneEscape)` and the boss flees.
+
+#### How it knows to "Bait and Herd"
+1. **The Sensor:** The `BossMotor` acts as a spatial sensor, tracking the distance to the player and firing `OnPlayerDistanceChanged(float distance)`. Concurrently, an internal timer in the Adapter counts seconds since the last attack.
+2. **The Adapter:** Updates Quest Machine variables: `PlayerDistance = 45` and `TimeSinceLastDesire = 6`.
+3. **The Node Graph Logic:** The "EvaluateCombat" node evaluates the conditions. Because the boss is relatively healthy (`ThreatLevel < 50`), the player is far away (`PlayerDistance > 30`), and the boss has been passive for too long (`TimeSinceLastDesire > 5`), the conditions align to transition to the "BaitAndHerd" node.
+4. **The Execution (Atomic Actions):** The node outputs `SetMotorIntentAction(Intent: Pursue, Target: Player)` to close the distance without committing to a full attack.
+
+---
+
+### Proof of Concept: Uncoupling the Legacy Behaviors
 
 To completely remove `DragonActionListeners` without losing functionality, we move the composition of behavior directly into the **Quest Machine Node UI** using **Atomic Custom Actions**. 
 
