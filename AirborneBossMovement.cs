@@ -147,6 +147,14 @@ public class AirborneBossMovement : BaseBossMovement
 
         blendDuration = distance / currentSpeed;
         if (blendDuration < 0.5f) blendDuration = 0.5f; // Hard floor so it doesn't instantly snap on tiny distances
+
+        // Tell the body manager we are switching splines IMMEDIATELY so it can properly map breadcrumbs
+        // while the head flies toward it, preventing the body segments from freezing rigidly in place.
+        SegmentedDragonManager dragonBody = GetComponent<SegmentedDragonManager>();
+        if (dragonBody != null)
+        {
+            dragonBody.SwitchToNewSpline(splineComputer);
+        }
     }
 
     private void FinalizeSplineAttachment()
@@ -163,13 +171,6 @@ public class AirborneBossMovement : BaseBossMovement
         rootFollower.SetPercent(sample.percent);
 
         rootFollower.follow = true;
-
-        // ONLY switch the body segments after the head has physically arrived at the spline
-        SegmentedDragonManager dragonBody = GetComponent<SegmentedDragonManager>();
-        if (dragonBody != null)
-        {
-            dragonBody.SwitchToNewSpline(targetSplineForBlend);
-        }
 
         isBlending = false;
         targetSplineForBlend = null;
