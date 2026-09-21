@@ -16,7 +16,7 @@ The Quest Machine is completely invisible to the player. While the concept is so
 
 ## Phase 1: The First Attempt (Current Implementation)
 
-Our initial approach proved that Quest Machine could drive AI, but the engineering was messy. The biggest issue stems from confusing naming and a lack of proper delineation between what constitutes the creature's Understanding, its Movement, and its Body.
+Our initial approach proved that Quest Machine could drive AI, but the engineering was messy. The biggest issue stems from confusing naming and a lack of proper delineation between the containers for body statistics, movement logic, and the brain itself.
 
 ### The Components
 
@@ -25,25 +25,25 @@ Our initial approach proved that Quest Machine could drive AI, but the engineeri
 
 2. **`DragonActionListeners` (The Message Router)**
    - **Role:** Listens for `"DragonActions"` messages from the Quest Machine and delegates them.
-   - **The Flaw:** It is too deeply involved in multiple domains, manually commanding movement, firing breath attacks, and altering phases directly.
+   - **The Flaw:** It is too deeply involved in multiple domains, manually commanding movement logic, firing breath attacks, and altering phases directly in the body statistics.
 
 3. **`BossCreature` (The Confusing Naming)**
    - **Role:** Currently manages Health, Stamina, and Phase state (`Orchestrator`, `Engaged`, `Exhausted`, `Recharging`).
-   - **The Flaw (Naming & Responsibility):** The name `BossCreature` implies it represents the *entire entity* (Understanding + Body + Movement). However, it only acts as a vitals/state manager. To make matters worse, it bleeds into decision-making (e.g., it decides to force an evasion when stamina drains or damage is high). This subverts the Quest Machine, meaning the "brain" is no longer the single source of truth.
+   - **The Flaw (Naming & Responsibility):** The name `BossCreature` implies it represents the *entire entity* (Brain + Body Statistics + Movement Logic). However, it only acts as a container for body statistics and state. To make matters worse, it bleeds into decision-making (e.g., it decides to force an evasion when stamina drains or damage is high). This subverts the Quest Machine, meaning the actual "brain" is no longer the single source of truth.
 
 4. **`AirborneBossMovement` (Movement Execution + Fragmented Logic)**
    - **Role:** Executes flight intents (`Pursue`, `Bank`, `Stillhold`) and path follow blending.
-   - **The Flaw:** Instead of purely executing movement, it independently queries `BossCreature.currentPhase` and `BossCreature.GetCurrentHealthPct()` in its `Update()` loop to decide where to fly.
+   - **The Flaw:** Instead of purely acting as a container for movement logic, it independently queries `BossCreature.currentPhase` and `BossCreature.GetCurrentHealthPct()` in its `Update()` loop to decide where to fly.
 
 ### Why It's Messy
-- **No Intuitive Delineation:** The separation between the physical entity, the locomotion, and the intellect is blurred.
-- **Double Responsibility:** Classes like `BossCreature` act as both a health bar and an AI override.
+- **No Intuitive Delineation:** The separation between the container for physical body statistics, the container for movement logic, and the central brain is blurred.
+- **Double Responsibility:** Classes like `BossCreature` act as both a body statistics container and an AI override.
 
 ---
 
 ## Phase 2: The Optimal Solution (Architectural Evolution)
 
-To resolve the messiness, we must rebuild the architecture with intuitive delineation. A boss logically consists of three distinct concepts: **The Body**, **The Ability to Move**, and **Its Understanding of the Environment**.
+To resolve the messiness, we must rebuild the architecture with intuitive delineation. A boss logically consists of three distinct concepts: **The Container for Body Statistics**, **The Container for Movement Logic**, and **The Brain**.
 
 ### Introducing the Triad Architecture
 
@@ -51,17 +51,17 @@ We will rename and restructure the classes to enforce strict boundaries based on
 
 ```mermaid
 graph TD
-    subgraph The Body
+    subgraph The Body Statistics
         BV[BossVitals]
     end
 
-    subgraph The Understanding of the Environment
+    subgraph The Brain
         IDB((IDragonBrain))
         DDB[DefaultDragonBrain] -.->|Implements| IDB
         QMB[QuestMachineDragonBrain] -.->|Implements| IDB
     end
 
-    subgraph The Ability to Move & Execute
+    subgraph The Movement Logic
         ABM[BossMotor / AirborneBossMovement]
         EBC[ElementalBreathController]
         DAL[Action Listeners]
@@ -78,23 +78,23 @@ graph TD
 
 ### The Clean Responsibilities
 
-1. **The Body (Replacing `BossCreature` with `BossVitals`):**
-   - **Role:** Purely manages the physical state (Health, Stamina, Status Effects).
-   - **Change:** It no longer makes decisions like `ForceImmediateEvasion()`. If stamina hits zero, it simply fires an event (`OnStaminaDepleted`). It has no understanding of the environment; it just exists and takes damage. The name `BossVitals` intuitively clarifies that this is just the physical shell, not the whole creature.
+1. **The Body Statistics (Replacing `BossCreature` with `BossVitals`):**
+   - **Role:** Purely acts as the container for the body statistics (Health, Stamina, Status Effects).
+   - **Change:** It no longer makes decisions like `ForceImmediateEvasion()`. If stamina hits zero, it simply fires an event (`OnStaminaDepleted`). It makes no decisions; it just holds statistics and takes damage. The name `BossVitals` intuitively clarifies that this is just the statistical shell, not the whole creature.
 
-2. **The Ability to Move (Refactoring `AirborneBossMovement`):**
-   - **Role:** Purely handles physical locomotion. It provides the *ability* to move, but lacks the *reason* to move.
-   - **Change:** It no longer queries the Body for health or phase. All internal decision logic is removed. It only acts when commanded (e.g., `RequestFreestyleIntent`).
+2. **The Movement Logic (Refactoring `AirborneBossMovement`):**
+   - **Role:** Purely acts as the container for movement execution logic.
+   - **Change:** It no longer queries the Body Statistics for health or phase. All internal decision logic is removed. It only executes movement logic when commanded by the Brain (e.g., `RequestFreestyleIntent`).
 
-3. **Its Understanding (`IDragonBrain`):**
+3. **The Brain (`IDragonBrain`):**
    - **Role:** The entity's comprehension of the environment, the undisputed master of behavior, and the single source of truth.
-   - **Change:** It receives physical events from the Body (e.g., high damage taken) and spatial/world events from the Movement systems (e.g., player attached tether, arrived at destination). It processes this understanding of the environment and issues commands back to the Body and Movement systems.
+   - **Change:** It receives physical events from the Body Statistics container (e.g., high damage taken) and spatial/world events from the Movement Logic container (e.g., player attached tether, arrived at destination). It processes these inputs and issues commands back to the Body and Movement systems.
 
 ### How Quest Machine Plugs In
 
 With this architecture, the system is fully modular.
 - We can run a `DefaultDragonBrain` (pure C# logic) for simple testing.
-- When we plug in the `QuestMachineDragonBrain` (which implements `IDragonBrain`), it simply pipes its understanding of the environment (e.g., `OnStaminaDepleted`, `OnTetherAttached`) directly into the Quest Machine graph as conditions.
-- The Quest Machine nodes process these conditions, transition states, and send action commands out to the pure executors (Movement and Body).
+- When we plug in the `QuestMachineDragonBrain` (which implements `IDragonBrain`), it simply pipes the reported events (e.g., `OnStaminaDepleted`, `OnTetherAttached`) directly into the Quest Machine graph as conditions.
+- The Quest Machine nodes process these conditions, transition states, and send action commands out to the pure executors (the Movement Logic and the Body Statistics).
 
 This optimal solution guarantees that our naming makes intuitive sense, and our visual node graph remains the strict, decoupled master of the boss's behavior.
