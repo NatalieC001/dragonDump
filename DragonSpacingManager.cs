@@ -33,8 +33,6 @@ public class DragonSpacingManager : MonoBehaviour
             segment = segment,
             length = segmentSize
         });
-
-        //Debug.Log($"<color=cyan>[DragonSpacingManager] Registered {segment.gameObject.name} with length {segmentSize}</color>");
     }
 
     /// <summary>
@@ -51,7 +49,6 @@ public class DragonSpacingManager : MonoBehaviour
                 RegisterSegment(seg);
             }
         }
-       // Debug.Log($"<color=cyan>[DragonSpacingManager] Array Refreshed! Now tracking {activeSegmentsData.Count} elements.</color>");
     }
 
     /// <summary>
@@ -66,16 +63,8 @@ public class DragonSpacingManager : MonoBehaviour
         {
             var data = activeSegmentsData[i];
 
-            // If we've reached the target segment, we're done summing
             if (data.segment == targetSegment)
             {
-                // Note: If we want the target segment to sit directly behind the previous one, 
-                // the distance is the center-to-center offset. 
-                // Since length is total bounding box length, we add half the previous piece's length 
-                // and half of this piece's length, or simply sum the full lengths up to this point
-                // if the origins are at the edge. Usually origins are in the center.
-
-                // Assuming origins are exactly in the center of the mesh:
                 if (i > 0)
                 {
                     cumulativeDistance += (data.length / 2f);
@@ -83,18 +72,15 @@ public class DragonSpacingManager : MonoBehaviour
                 break;
             }
 
-            // For the first element (Head), we add half its length
             if (i == 0)
             {
                 cumulativeDistance += (data.length / 2f);
             }
             else
             {
-                // For middle elements, we add their full length
                 cumulativeDistance += data.length;
             }
 
-            // Add padding between pieces
             cumulativeDistance += padding;
         }
 
