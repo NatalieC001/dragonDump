@@ -60,15 +60,6 @@ public class LevelAdvanceGong : MonoBehaviour, IArrowTarget
     /// <summary>
     /// Called automatically by the StickingArrow when an arrow physically collides with this GameObject.
     /// </summary>
-    /// <summary>
-    /// Allows the developer to test the game loop quickly by left-clicking the Gong in the Scene/Game view.
-    /// </summary>
-    private void OnMouseDown()
-    {
-        Debug.Log("[LevelAdvanceGong] Gong clicked by mouse! Simulating arrow hit for testing.");
-        OnArrowHit(0f, transform.position, ElementTypeOB7.Normal);
-    }
-
     public void OnArrowHit(float damage, Vector3 impactPoint, ElementTypeOB7 elementType)
     {
         if (isCoolingDown) return;
