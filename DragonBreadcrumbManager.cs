@@ -6,7 +6,7 @@ using System.Collections.Generic;
 /// Solely responsible for tracking the breadcrumb history of the boss's root object
 /// and physically dragging the pieces along that track.
 /// </summary>
-public class DragonMovementManager : MonoBehaviour
+public class DragonBreadcrumbManager : MonoBehaviour
 {
     private struct PositionData
     {

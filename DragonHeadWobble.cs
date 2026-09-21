@@ -3,7 +3,7 @@ using UnityEngine;
 /// <summary>
 /// Attaches to the visual Dragon Head object.
 /// Applies a continuous sinusoidal local offset to simulate a snake/fish swimming motion.
-/// Because DragonMovementManager records the transform of the object this is attached to,
+/// Because DragonBreadcrumbManager records the transform of the object this is attached to,
 /// this single script causes the entire body to naturally undulate as they follow the breadcrumbs.
 /// </summary>
 public class DragonHeadWobble : MonoBehaviour
