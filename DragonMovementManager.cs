@@ -209,7 +209,7 @@ public class DragonMovementManager : MonoBehaviour
     /// by interpolating between two breadcrumbs.
     /// Uses Rigidbody.MovePosition when available to prevent arrow tunnelling.
     /// </summary>
-    public void PlaceSegment(DragonSegment segment, float requiredDistanceBehindHead)
+    public void PlaceSegment(DragonSegment segment, float requiredDistanceBehindHead, Transform segmentAhead = null)
     {
         if (segment == null || positionHistory.Count < 2) return;
 
@@ -231,42 +231,57 @@ public class DragonMovementManager : MonoBehaviour
                 Vector3 newPos = Vector3.Lerp(newer.position, older.position, t);
                 Quaternion newRot = Quaternion.Slerp(newer.rotation, older.rotation, t); // Fallback
 
-                // Determine rotation by looking at the path ahead (agnostic to other physical segments)
-                // We look slightly ahead in the history (e.g. 1.0 meter) to find the direction of the spine
-                float lookAheadDist = targetDistInHistory + 1.0f;
+                // --- DUAL ALIGNMENT SYSTEM ---
+                // SPLINE / BLENDING: Look ahead on the invisible path history (spine tracking).
+                // FREESTYLE: Look directly at the physical segment ahead to cascade the sine-wave undulation.
 
-                // If the required look ahead is past the head's current distance, just look at the head
-                if (lookAheadDist >= headTotalDistance)
+                bool isFreestyle = movementBrain != null && movementBrain.currentMode == AirborneBossMovement.MovementMode.Freestyle;
+                Transform targetToLookAt = segmentAhead != null ? segmentAhead : (headTransform != null ? headTransform : transform);
+
+                if (isFreestyle && targetToLookAt != null)
                 {
-                    Vector3 headPos = headTransform != null ? headTransform.position : transform.position;
-                    Vector3 toHead = (headPos - newPos).normalized;
-                    if (toHead != Vector3.zero)
+                    Vector3 toTarget = (targetToLookAt.position - newPos).normalized;
+                    if (toTarget != Vector3.zero)
                     {
-                        newRot = Quaternion.LookRotation(toHead);
+                        newRot = Quaternion.LookRotation(toTarget);
                     }
                 }
                 else
                 {
-                    // Find the breadcrumb position ahead of us
-                    for (int k = 0; k < j; k++)
+                    // SPLINE MODE: Path History LookAhead
+                    float lookAheadDist = targetDistInHistory + 1.0f;
+
+                    if (lookAheadDist >= headTotalDistance)
                     {
-                        PositionData aheadNewer = positionHistory[k];
-                        PositionData aheadOlder = positionHistory[k + 1];
-
-                        if (lookAheadDist <= aheadNewer.distanceTraveled &&
-                            lookAheadDist >= aheadOlder.distanceTraveled)
+                        Vector3 headPos = headTransform != null ? headTransform.position : transform.position;
+                        Vector3 toHead = (headPos - newPos).normalized;
+                        if (toHead != Vector3.zero)
                         {
-                            float rangeAhead = aheadNewer.distanceTraveled - aheadOlder.distanceTraveled;
-                            float tAhead     = rangeAhead > 0f ? (aheadNewer.distanceTraveled - lookAheadDist) / rangeAhead : 0f;
+                            newRot = Quaternion.LookRotation(toHead);
+                        }
+                    }
+                    else
+                    {
+                        for (int k = 0; k < j; k++)
+                        {
+                            PositionData aheadNewer = positionHistory[k];
+                            PositionData aheadOlder = positionHistory[k + 1];
 
-                            Vector3 posAhead = Vector3.Lerp(aheadNewer.position, aheadOlder.position, tAhead);
-                            Vector3 forwardDir = (posAhead - newPos).normalized;
-
-                            if (forwardDir != Vector3.zero)
+                            if (lookAheadDist <= aheadNewer.distanceTraveled &&
+                                lookAheadDist >= aheadOlder.distanceTraveled)
                             {
-                                newRot = Quaternion.LookRotation(forwardDir);
+                                float rangeAhead = aheadNewer.distanceTraveled - aheadOlder.distanceTraveled;
+                                float tAhead     = rangeAhead > 0f ? (aheadNewer.distanceTraveled - lookAheadDist) / rangeAhead : 0f;
+
+                                Vector3 posAhead = Vector3.Lerp(aheadNewer.position, aheadOlder.position, tAhead);
+                                Vector3 forwardDir = (posAhead - newPos).normalized;
+
+                                if (forwardDir != Vector3.zero)
+                                {
+                                    newRot = Quaternion.LookRotation(forwardDir);
+                                }
+                                break;
                             }
-                            break;
                         }
                     }
                 }
