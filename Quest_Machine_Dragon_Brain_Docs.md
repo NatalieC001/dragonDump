@@ -55,7 +55,7 @@ graph TD
     ForceVulnerability -->|No Recovery Left| DefeatDragon((Defeat Dragon))
     
     %% Obstacles
-    AssessArena -.->|Avoid| Clouds[Hazards: Clouds & Traps]
+    AssessArena -.->|Avoid| Clouds[Hazards: Cursed Pots & Clouds]
     Clouds -.->|Debuffs| ShrinkArena(Shrinks Arena & Weakens Attacks)
 ```
 
@@ -192,41 +192,41 @@ The dragon does not just react to being hit; it proactively "thinks" about its e
 
 The Quest Machine evaluates variables imported from this Grid Sensor (and other environmental signals) in a strict hierarchical order. **These are four distinct logic loops.** 
 
-*(Note: The diagram below uses subgraph names that map 1:1 with the descriptive text to ensure clarity.)*
+*(Note: The diagram below uses subgraph names and node labels that map exactly 1:1 with the logic described in the text.)*
 
 ```mermaid
 graph TD
     Idle[Evaluate AI State] --> Loop1
     
     %% Loop 1: 1. Survival (Reactive)
-    subgraph 1. Survival Reactive
-        Loop1{Is Crystal Threatened?}
-        Loop1 -- Yes --> Defend[Action: Defend Crystal]
-        Loop1 -- No --> ThreatCheck{Health/Stamina Critical?}
-        ThreatCheck -- Yes --> EvadeRegen[Action: Evade & Regenerate]
+    subgraph Priority1_Survival [1. Survival Reactive]
+        IsCrystalThreatened{IsCrystalThreatened == True?}
+        IsCrystalThreatened -- Yes --> Defend[Action: Defend Crystal]
+        IsCrystalThreatened -- No --> IsHealthCritical{IsHealthCritical == True?}
+        IsHealthCritical -- Yes --> EvadeRegen[Action: Evade & Regenerate]
     end
     
     %% Loop 2: 2. Tactical Environmental Control (Proactive Thinking)
-    subgraph 2. Tactical Environmental Control Proactive Thinking
-        ThreatCheck -- No --> CheckSpace{Does the Grid show the <br> player has open adjacent cells?}
-        CheckSpace -- Yes --> ToppleCheck{Are pillars/columns <br> available near player's grid cell?}
-        ToppleCheck -- Yes --> Topple[Action: Topple Column <br> to block grid movement/vision]
-        ToppleCheck -- No --> Clouds[Action: Cast Hazards <br> onto open grid cells]
+    subgraph Priority2_Tactical [2. Tactical Environmental Control Proactive Thinking]
+        IsHealthCritical -- No --> PlayerWalkableCells{PlayerWalkableCells > Threshold?}
+        PlayerWalkableCells -- Yes --> ColumnsAvailableNearPlayer{ColumnsAvailableNearPlayer == True?}
+        ColumnsAvailableNearPlayer -- Yes --> Topple[Action: Topple Column]
+        ColumnsAvailableNearPlayer -- No --> Clouds[Action: Cast Hazards]
     end
     
     %% Loop 3: 3. Ambush Preparation
-    subgraph 3. Ambush Preparation
+    subgraph Priority3_Preparation [3. Ambush Preparation]
         %% Adversarial Resilience: The boss will spawn minions if the player is boxed in, OR if the Dragon runs out of patience waiting.
-        CheckSpace -- No Player is Boxed In --> SpawnCheck
-        ToppleCheck -.->|Fallback if player avoids hazards| CheckPatience{Has the Dragon's <br> Patience Timer expired?}
-        CheckPatience -- Yes --> SpawnCheck{Do I have stored <br> waves in hiding?}
-        SpawnCheck -- No --> SpawnHidden[Action: Spawn Special Minions near Dragon]
+        PlayerWalkableCells -- No Player is Boxed In --> SpecialMinionsAccrued
+        ColumnsAvailableNearPlayer -.->|Fallback if player avoids hazards| PatienceTimer{PatienceTimerExpired == True?}
+        PatienceTimer -- Yes --> SpecialMinionsAccrued{SpecialMinionsAccrued >= RequiredAmount?}
+        SpecialMinionsAccrued -- No --> SpawnHidden[Action: Spawn Special Minions]
     end
     
     %% Loop 4: 4. Coordinated Execution
-    subgraph 4. Coordinated Execution
-        SpawnCheck -- Yes --> FinalCharge[Action: Coordinated Final Charge <br> Swoop + Swarm + Breath]
-        CheckPatience -- No --> Idle
+    subgraph Priority4_Execution [4. Coordinated Execution]
+        SpecialMinionsAccrued -- Yes --> FinalCharge[Action: Coordinated Final Charge]
+        PatienceTimer -- No --> Idle
     end
     
     Defend -->|Action Complete| Idle
@@ -249,17 +249,22 @@ Before doing anything else, the Dragon must secure its supply lines.
 
 #### 2. Tactical Environmental Control (Proactive Thinking)
 If the Dragon is safe (Loop 1 passed), it begins evaluating the arena geometry via the **Platform Grid Sensor**. 
-- **The External Signal:** The grid script tracks exactly which cell (e.g., `Grid[2,2]`) the player is standing on, and which adjacent cells are currently occupied by obstacles or hazards (like Dark Spirit clouds or sticky traps). It broadcasts this state to the Adapter.
-- **The Evaluation:** The Brain checks the spatial variables: `PlayerWalkableCells` and `PlayerHasLineOfSight`.
-- **The Decision:** If the grid shows the player has too many open surrounding cells, the Dragon decides to strip those advantages. It checks `ColumnsAvailableNearPlayer`. If true, it executes an action to **Topple a Column**, cutting off player movement in that grid direction and creating a visual obstruction. If no columns are left, it targets specific open coordinates on the grid to cast **Hazards (Clouds/Sticky Traps)** to corral the player.
+- **The External Signal:** The grid script tracks exactly which cell (e.g., `Grid[2,2]`) the player is standing on, and which adjacent cells are currently occupied by obstacles or hazards. It broadcasts this state to the Adapter.
+- **The Evaluation:** The Brain checks the spatial variable `PlayerWalkableCells`.
+- **The Decision:** If the grid shows the player has too many open surrounding cells, the Dragon decides to strip those advantages. It checks `ColumnsAvailableNearPlayer`. If true, it executes an action to **Topple a Column**, cutting off player movement in that grid direction and creating a visual obstruction. If no columns are left, it targets specific open coordinates on the grid to cast **Hazards (Cursed Pots/Clouds)** to corral the player.
+
+**Skill Expression & Gameplay Reward Design:** 
+The hazard cast by the dragon is a "Cursed Pot" projectile. When it hits the ground, it smashes and releases Dark Spirit Clouds.
+- A **clever player** is rewarded for shooting the cursed pot mid-air or avoiding the resulting cloud. They retain full weapon strength, allowing them to kill the dragon faster and achieve a higher score. This rewards active dodging and situational awareness.
+- A **bad player** who fails to shoot the pot or walks directly into the Dark Spirit Cloud receives an incremental weapon strength debuff. They may still pass the level, but their damage output plummets, resulting in a much longer fight and a poor final score. *(Note: This debuff mechanism can be initially tested using a simple boolean flag in the player's stats to monitor how often they stand inside the cloud).*
 
 #### 3. Ambush Preparation (Adversarial Resilience)
 Once the player's movement and vision are crippled (Loop 2 passed), the Dragon uses that opportunity to prepare an overwhelming assault. However, a well-designed AI must be resilient. **It cannot permanently stall just because a skilled player successfully dodges all hazards and refuses to be boxed in.**
-- **The Evaluation:** The Brain checks if the player is restricted (`PlayerWalkableCells < Threshold`). **Fallback Check:** If the player is *not* restricted, the Brain checks an internal `PatienceTimer`. If the timer expires, the Dragon decides it is done waiting and forces the next phase. It then checks if enough of its Special Minions have accrued in hiding.
+- **The Evaluation:** The Brain checks if the player is restricted (`PlayerWalkableCells < Threshold`). **Fallback Check:** If the player is *not* restricted, the Brain checks an internal `PatienceTimer`. If the timer expires, the Dragon decides it is done waiting and forces the next phase. It then checks the variable `SpecialMinionsAccrued`.
 - **The Decision:** If minion numbers are low, the Dragon executes an action to **Spawn Special Minions**. These spawn near the Dragon, forcing the player to try and shoot them mid-air. If the minions survive the journey, they tuck themselves into inaccessible, hidden locations within the arena geometry, waiting for the command.
 
 #### 4. Coordinated Execution
-- **The Evaluation:** The Dragon is healthy (Loop 1), the player is either boxed in or the Dragon's patience has expired (Loops 2/3), and the Special Minion ambush wave is fully staged and accrued.
+- **The Evaluation:** The Dragon is healthy (Loop 1), the player is either boxed in or the Dragon's patience has expired (Loops 2/3), and the Special Minion ambush wave is fully staged (`SpecialMinionsAccrued >= RequiredAmount`).
 - **The Decision:** The conditions are perfect for the climax of the battle. The node transitions to the **Coordinated Final Charge**. The Dragon commands the hidden minion waves to emerge and swarm while simultaneously executing a heavy **Swoop** and firing **Elemental Breath**, catching the player in a devastating, multi-directional crossfire. Surviving this brutal wave is the key to advancing the phase.
 
 ---
