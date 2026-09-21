@@ -18,6 +18,12 @@ public class AirborneBossMovement : BaseBossMovement
     [Tooltip("Speed at which the dragon flies along an escape route.")]
     public float escapeSpeed = 18f;
 
+    [Header("Freestyle Undulation")]
+    [Tooltip("How fast the dragon snakes side-to-side in freestyle/blending air.")]
+    public float undulationFrequency = 3f;
+    [Tooltip("How wide the side-to-side snaking is.")]
+    public float undulationAmplitude = 2f;
+
     private GameObject currentActivePath;
     private SplineFollower rootFollower;
 
@@ -101,9 +107,12 @@ public class AirborneBossMovement : BaseBossMovement
     /// <summary>
     /// Assigns a SplineComputer from the given path GameObject to the root SplineFollower and starts following.
     /// </summary>
-    private void AssignSplineAndFollow(GameObject pathObj, float speed)
+    private bool isCurrentPathLooping = true;
+
+    private void AssignSplineAndFollow(GameObject pathObj, float speed, bool looping = true)
     {
         if (rootFollower == null || pathObj == null) return;
+        isCurrentPathLooping = looping;
 
         SplineComputer splineComputer = pathObj.GetComponentInChildren<SplineComputer>();
         if (splineComputer == null)
@@ -143,7 +152,7 @@ public class AirborneBossMovement : BaseBossMovement
 
         rootFollower.spline = targetSplineForBlend;
         rootFollower.followSpeed = targetFollowSpeedForBlend;
-        rootFollower.wrapMode = SplineFollower.Wrap.Loop;
+        rootFollower.wrapMode = isCurrentPathLooping ? SplineFollower.Wrap.Loop : SplineFollower.Wrap.Default;
 
         // Project to get exact percent and set it before enabling follow
         SplineSample sample = new SplineSample();
@@ -180,6 +189,18 @@ public class AirborneBossMovement : BaseBossMovement
             return;
         }
 
+        // If we reached the end of a non-looping path (like an escape route), detach so we don't repeat it
+        if (!isCurrentPathLooping && rootFollower != null && rootFollower.follow)
+        {
+            double currentPercent = rootFollower.result.percent;
+            if (currentPercent >= 0.999 || currentPercent <= 0.001 && rootFollower.direction == Spline.Direction.Backward)
+            {
+                rootFollower.follow = false;
+                currentActivePath = null;
+                Debug.Log($"[{gameObject.name}] Reached end of linear path. Detaching for next action.");
+            }
+        }
+
         // Read phase from the BossCreature brain to drive movement decisions.
         bool desiresToEscape = bossBrain != null &&
             (bossBrain.currentPhase == BossCreature.BossPhase.Exhausted);
@@ -212,7 +233,15 @@ public class AirborneBossMovement : BaseBossMovement
         SplineSample targetSample = new SplineSample();
         targetSplineForBlend.Project(transform.position, ref targetSample);
 
-        transform.position = Vector3.Lerp(blendStartPos, (Vector3)targetSample.position, smoothT);
+        Vector3 basePosition = Vector3.Lerp(blendStartPos, (Vector3)targetSample.position, smoothT);
+
+        // Add graceful undulation (snaking) so the body trails beautifully
+        float sway = Mathf.Sin(Time.time * undulationFrequency) * undulationAmplitude;
+
+        // Fade out the sway as it approaches the spline to dock perfectly
+        float swayFade = 1f - smoothT;
+
+        transform.position = basePosition + (transform.right * sway * swayFade);
         transform.rotation = Quaternion.Slerp(blendStartRot, targetSample.rotation, smoothT);
 
         if (t >= 1f)
@@ -235,7 +264,7 @@ public class AirborneBossMovement : BaseBossMovement
         currentActivePath = GetObservationPath(PathTypeTag.PathType.Airborne);
         if (currentActivePath != null)
         {
-            AssignSplineAndFollow(currentActivePath, observationSpeed);
+            AssignSplineAndFollow(currentActivePath, observationSpeed, true);
             Debug.Log($"[{gameObject.name}] Resuming observation spline: {currentActivePath.name}");
         }
     }
@@ -254,7 +283,7 @@ public class AirborneBossMovement : BaseBossMovement
             // Only assign if we aren't already following or blending to this exact path
             if (isBlending || (rootFollower != null && rootFollower.follow)) return;
 
-            AssignSplineAndFollow(currentActivePath, escapeSpeed);
+            AssignSplineAndFollow(currentActivePath, escapeSpeed, false);
         }
         else
         {
@@ -262,7 +291,11 @@ public class AirborneBossMovement : BaseBossMovement
             Vector3 targetForward = (transform.forward + Vector3.up * 0.5f).normalized;
             if (targetForward != Vector3.zero)
             {
-                Quaternion upwardRotation = Quaternion.LookRotation(targetForward);
+                // Apply undulation to the rotation to create a snaking forward flight path
+                float sway = Mathf.Sin(Time.time * undulationFrequency) * undulationAmplitude;
+                Vector3 snakingForward = targetForward + (transform.right * sway * 0.1f);
+
+                Quaternion upwardRotation = Quaternion.LookRotation(snakingForward.normalized);
                 transform.rotation = Quaternion.Slerp(transform.rotation, upwardRotation, Time.deltaTime * 2f);
             }
             transform.position += transform.forward * escapeSpeed * Time.deltaTime;
@@ -277,7 +310,7 @@ public class AirborneBossMovement : BaseBossMovement
         if (escapePath != null)
         {
             currentActivePath = escapePath;
-            AssignSplineAndFollow(currentActivePath, escapeSpeed);
+            AssignSplineAndFollow(currentActivePath, escapeSpeed, false);
             Debug.Log($"[{gameObject.name}] Airborne movement jumping to escape route: {currentActivePath.name}");
         }
         else
