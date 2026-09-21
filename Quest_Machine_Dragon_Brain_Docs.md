@@ -97,9 +97,52 @@ In Phase 1, the "Brain" was a confusing mix of concepts. In Phase 2, it is stric
 
 ---
 
-### Proof of Concept: Uncoupling the Legacy Behaviors
+### The Node-Based Logic: How Decisions Are Made
 
-In Phase 1, the `DragonActionListeners` script used a giant, heavily-coupled C# switch statement to parse macro-strings like `"Swoop"` and `"SpawnWave"`.
+To prove that the decoupled system can handle all combat logic exclusively inside the visual editor, we must examine exactly how the nodes evaluate variables to transition states.
+
+The C# classes (`BossVitals`, `BossMotor`) only fire events. The `QuestMachineDragonBrain` (Adapter) takes those events and updates integers/booleans inside the Quest Machine asset. The nodes constantly monitor those variables.
+
+Below is a diagram of the Node Graph showing how the variables trigger transitions, followed by concrete explanations of the exact logic.
+
+```mermaid
+stateDiagram-v2
+    [*] --> IdleOrchestrating
+
+    IdleOrchestrating --> EvaluateCombat : Player Enters Arena
+
+    EvaluateCombat --> DefendCrystal : IsCrystalThreatened == True
+    EvaluateCombat --> Evade : ThreatLevel >= 100 OR Stamina == 0
+    EvaluateCombat --> BaitAndHerd : ThreatLevel < 50 AND TimeSinceLastDesire > 5s
+    EvaluateCombat --> Swoop : ThreatLevel < 50 AND PlayerDistance < 30m
+
+    DefendCrystal --> EvaluateCombat : Action Completed
+    Evade --> EvaluateCombat : Action Completed (Stamina Replenished)
+    BaitAndHerd --> EvaluateCombat : Action Completed
+    Swoop --> EvaluateCombat : Action Completed
+```
+
+#### How it knows to "Defend the Crystal"
+1. **The Sensor:** A global level manager or the crystal object itself detects it is taking damage from the player. It invokes an event: `OnCrystalUnderAttack()`.
+2. **The Adapter:** The `QuestMachineDragonBrain` receives this event and updates a Quest Machine boolean variable: `IsCrystalThreatened = True`.
+3. **The Node Graph Logic:** The "EvaluateCombat" node has a condition checking that boolean. Because it is true, the graph immediately transitions to the "DefendCrystal" node.
+4. **The Execution (Atomic Actions):** The "DefendCrystal" node executes its Actions list. It calls `RequestSplineAction(AirborneObservation)` and the boss flies to the crystal.
+
+#### How it knows to "Evade"
+1. **The Sensor:** `BossVitals` calculates that the player just dealt massive burst damage in a short window. It invokes `OnBurstDamageTaken(float amount)`. Alternatively, it detects stamina has reached zero and invokes `OnStaminaDepleted()`.
+2. **The Adapter:** The `QuestMachineDragonBrain` receives these events. It increments a Quest Machine counter: `ThreatLevel += 50`. Or, if stamina is gone, it sets `Stamina = 0`.
+3. **The Node Graph Logic:** The "EvaluateCombat" node has a condition: `If ThreatLevel >= 100 OR Stamina == 0`. When evaluated to true, the graph transitions to the "Evade" node.
+4. **The Execution (Atomic Actions):** The "Evade" node executes `RequestSplineAction(AirborneEscape)` and the boss flees.
+
+#### How it knows to "Bait and Herd"
+1. **The Sensor:** The `BossMotor` acts as a spatial sensor, tracking the distance to the player and firing `OnPlayerDistanceChanged(float distance)`. Concurrently, an internal timer in the Adapter counts seconds since the last attack.
+2. **The Adapter:** Updates Quest Machine variables: `PlayerDistance = 45` and `TimeSinceLastDesire = 6`.
+3. **The Node Graph Logic:** The "EvaluateCombat" node evaluates the conditions. Because the boss is relatively healthy (`ThreatLevel < 50`), the player is far away (`PlayerDistance > 30`), and the boss has been passive for too long (`TimeSinceLastDesire > 5`), the conditions align to transition to the "BaitAndHerd" node.
+4. **The Execution (Atomic Actions):** The node outputs `SetMotorIntentAction(Intent: Pursue, Target: Player)` to close the distance without committing to a full attack.
+
+---
+
+### Proof of Concept: Uncoupling the Legacy Behaviors
 
 To completely remove `DragonActionListeners` without losing functionality, we move the composition of behavior directly into the **Quest Machine Node UI** using **Atomic Custom Actions**.
 
