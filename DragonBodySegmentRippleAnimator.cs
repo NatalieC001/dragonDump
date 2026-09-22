@@ -3,12 +3,13 @@ using System.Collections;
 using System.Collections.Generic;
 
 /// <summary>
-/// A single-responsibility script that ONLY handles segment rotation cascading.
-/// It dynamically finds all segments and makes each one physically look at
+/// Attaches to the visual Dragon Head object (alongside DragonHeadWobble).
+/// A completely self-contained, physics-free script to drive the body segments.
+/// It dynamically finds all segments and makes each one physically follow and look at
 /// the segment immediately in front of it, creating a perfect snake chain.
-/// It does NOT touch spacing or position. It does NOT use breadcrumbs.
+/// NO breadcrumbs needed.
 /// </summary>
-public class DragonSegmentRotationCascade : MonoBehaviour
+public class DragonBodySegmentRippleAnimator : MonoBehaviour
 {
     [Header("Rotation Cascade Settings")]
     [Tooltip("How quickly each segment turns to face the one in front of it. Higher = stiffer snake.")]
@@ -32,7 +33,12 @@ public class DragonSegmentRotationCascade : MonoBehaviour
         int index = 0;
         while (true)
         {
-            Transform seg = transform.Find($"DragonSegment_{index}");
+            // Because this script is on DragonSegment_0 (a child of the root),
+            // it must look at its parent to find its sibling segments.
+            Transform parent = transform.parent;
+            if (parent == null) break;
+
+            Transform seg = parent.Find($"DragonSegment_{index}");
             if (seg != null)
             {
                 segmentTransforms.Add(seg);
@@ -44,7 +50,7 @@ public class DragonSegmentRotationCascade : MonoBehaviour
             }
         }
 
-        Debug.Log($"[DragonSegmentRotationCascade] Locked onto {segmentTransforms.Count} segments. Ready to cascade rotations!");
+        Debug.Log($"[DragonBodySegmentRippleAnimator] Locked onto {segmentTransforms.Count} segments. Ready to cascade rotations!");
     }
 
     private void LateUpdate()
