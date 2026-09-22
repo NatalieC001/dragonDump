@@ -58,7 +58,7 @@ To ensure the Dragon functions perfectly with the new movement system and your e
  ├── 📜 BossCreature.cs               (The core health/combat state machine)
  ├── 📜 SegmentedDragonManager.cs     (Manages the list of child segments)
  ├── 📜 DragonSpacingManager.cs       (Handles the dynamic lerping/gaps)
- ├── 📜 DragonMovementManager.cs      (Handles the breadcrumb trail following)
+ ├── 📜 DragonBreadcrumbManager.cs      (Handles the breadcrumb trail following)
  ├── 📜 SplineFollower.cs             (Required to traverse observation/escape paths)
  ├── 📜 CreatureStatusEffects.cs      (Required for elemental arrow reactions like Ice)
  │

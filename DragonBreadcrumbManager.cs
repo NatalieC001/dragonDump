@@ -9,11 +9,11 @@ using System.Collections.Generic;
 ///
 /// SEPARATION OF CONCERNS:
 ///   SegmentedDragonManager  — segment lifecycle (spawn, regrowth, gap-close on death)
-///   DragonMovementManager   — movement (breadcrumbs, undulation, placement)
+///   DragonBreadcrumbManager   — movement (breadcrumbs, undulation, placement)
 ///   DragonSpacingManager    — spacing (cumulative segment offsets)
 ///   AirborneBossMovement    — intent (spline/freestyle modes, speed)
 /// </summary>
-public class DragonMovementManager : MonoBehaviour
+public class DragonBreadcrumbManager : MonoBehaviour
 {
     private struct PositionData
     {
