@@ -3,10 +3,10 @@ using System.Collections;
 using System.Collections.Generic;
 
 /// <summary>
-/// A completely self-contained, physics-free script to drive the body segments.
-/// It dynamically finds all segments and makes each one physically follow and look at
+/// A single-responsibility script that ONLY handles segment rotation cascading.
+/// It dynamically finds all segments and makes each one physically look at
 /// the segment immediately in front of it, creating a perfect snake chain.
-/// NO breadcrumbs needed.
+/// It does NOT touch spacing or position. It does NOT use breadcrumbs.
 /// </summary>
 public class DragonSegmentRotationCascade : MonoBehaviour
 {
@@ -44,7 +44,7 @@ public class DragonSegmentRotationCascade : MonoBehaviour
             }
         }
 
-        Debug.Log($"[DragonSegmentRotationCascade] Locked onto {segmentTransforms.Count} segments. Ready to slither!");
+        Debug.Log($"[DragonSegmentRotationCascade] Locked onto {segmentTransforms.Count} segments. Ready to cascade rotations!");
     }
 
     private void LateUpdate()
@@ -65,6 +65,8 @@ public class DragonSegmentRotationCascade : MonoBehaviour
                 if (directionToAhead != Vector3.zero)
                 {
                     Quaternion targetRotation = Quaternion.LookRotation(directionToAhead);
+
+                    // ONLY affects rotation. Leaves position/spacing completely alone.
                     currentSeg.rotation = Quaternion.Slerp(currentSeg.rotation, targetRotation, Time.deltaTime * turnSpeed);
                 }
             }
