@@ -11,12 +11,36 @@ using Dreamteck.Splines;
 /// </summary>
 public class AirborneBossMovement : BaseBossMovement
 {
+    public enum MovementMode
+    {
+        Spline,
+        Freestyle,
+        BlendingToSpline
+    }
+
+    public enum FreestyleIntent
+    {
+        Pursue,
+        Swoop,
+        Bank,
+        Stillhold,
+        Withdraw
+    }
+
+    public MovementMode currentMode = MovementMode.Spline;
+    public FreestyleIntent CurrentIntent { get; private set; } = FreestyleIntent.Pursue;
+
+    private Vector3 freestyleTargetPos;
+
     [Header("Airborne Movement Settings")]
     [Tooltip("Speed at which the dragon follows its observation spline (units/sec).")]
     public float observationSpeed = 8f;
 
     [Tooltip("Speed at which the dragon flies along an escape route.")]
     public float escapeSpeed = 18f;
+
+    [Tooltip("Speed during freestyle pursuit or fallback.")]
+    public float baseFlightSpeed = 10f;
 
     private GameObject currentActivePath;
     private SplineFollower rootFollower;
@@ -188,10 +212,31 @@ public class AirborneBossMovement : BaseBossMovement
         {
             ExecuteEscapeChoreography();
         }
+        else if (currentMode == MovementMode.Freestyle)
+        {
+            ExecuteFreestyleTargeting();
+        }
         else
         {
             ExecuteObservationSpline();
         }
+    }
+
+    private void ExecuteFreestyleTargeting()
+    {
+        // Fish steer toward the intent target
+        Vector3 directionToTarget = (freestyleTargetPos - transform.position).normalized;
+        if (directionToTarget != Vector3.zero)
+        {
+            Quaternion targetRotation = Quaternion.LookRotation(directionToTarget);
+            transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, Time.deltaTime * steeringTurnSpeed);
+        }
+
+        float speed = baseFlightSpeed > 0 ? baseFlightSpeed : 10f;
+        if (CurrentIntent == FreestyleIntent.Swoop) speed = 20f;
+        if (CurrentIntent == FreestyleIntent.Stillhold) speed = 0f;
+
+        transform.position += transform.forward * speed * Time.deltaTime;
     }
 
     private void UpdateBlending()
@@ -323,6 +368,15 @@ public class AirborneBossMovement : BaseBossMovement
         if (bossBrain == null) return;
 
         // Note: Assumes Tethering is managed elsewhere or through BaseBossMovement
+    }
+
+    public void RequestFreestyleIntent(FreestyleIntent intent, Vector3 targetPos)
+    {
+        currentMode = MovementMode.Freestyle;
+        CurrentIntent = intent;
+        freestyleTargetPos = targetPos;
+
+        if (rootFollower != null) rootFollower.follow = false;
     }
 
     private void ExecuteFreestyleFallback()
