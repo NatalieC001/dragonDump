@@ -21,14 +21,11 @@ public class AirborneBossMovement : BaseBossMovement
     private GameObject currentActivePath;
     private SplineFollower rootFollower;
 
-    // --- TEMPORARY SKETCHED-IN LOGIC STATE ---
-    private float temporaryFreestyleTimer = 0f;
-    private bool temporaryForceObservation = false;
-
     // --- Blending State (Fish Steering) ---
     private bool isBlending = false;
     private SplineComputer targetSplineForBlend;
     private float targetFollowSpeedForBlend;
+    private bool isCurrentPathLooping = true;
 
     // Steering parameters
     [Header("Transition Steering")]
@@ -90,12 +87,6 @@ public class AirborneBossMovement : BaseBossMovement
                 rootFollower.SetPercent(0.0);
 
                 rootFollower.follow = true;
-
-                SegmentedDragonManager dragonBody = GetComponent<SegmentedDragonManager>();
-                if (dragonBody != null)
-                {
-                    dragonBody.SwitchToNewSpline(splineComputer);
-                }
             }
             Debug.Log($"<color=green>[{gameObject.name}] AirborneBossMovement: Dragon placed instantly on observation path '{currentActivePath.name}'.</color>");
         }
@@ -108,8 +99,6 @@ public class AirborneBossMovement : BaseBossMovement
     /// <summary>
     /// Assigns a SplineComputer from the given path GameObject to the root SplineFollower and starts following.
     /// </summary>
-    private bool isCurrentPathLooping = true;
-
     private void AssignSplineAndFollow(GameObject pathObj, float speed, bool looping = true)
     {
         if (rootFollower == null || pathObj == null) return;
@@ -128,13 +117,6 @@ public class AirborneBossMovement : BaseBossMovement
         targetFollowSpeedForBlend = speed;
 
         rootFollower.follow = false; // Disable rigid track-following until we get there
-
-        // Immediately inform the body manager of the new path context
-        SegmentedDragonManager dragonBody = GetComponent<SegmentedDragonManager>();
-        if (dragonBody != null)
-        {
-            dragonBody.SwitchToNewSpline(splineComputer);
-        }
     }
 
     private void FinalizeSplineAttachment()
@@ -173,15 +155,7 @@ public class AirborneBossMovement : BaseBossMovement
             return;
         }
 
-        // --- TEMPORARY SKETCHED-IN LOGIC: Freestyle Timer ---
-        // If we decided to freestyle temporarily, let it fly and snake around before making a new decision.
-        if (temporaryFreestyleTimer > 0f)
-        {
-            temporaryFreestyleTimer -= Time.deltaTime;
-            ExecuteFreestyleFallback();
-            return;
-        }
-
+        // --- End of Linear Path Check ---
         // If we reached the end of a non-looping path (like an escape route), detach so we don't repeat it
         if (!isCurrentPathLooping && rootFollower != null && rootFollower.follow)
         {
@@ -190,43 +164,25 @@ public class AirborneBossMovement : BaseBossMovement
             {
                 rootFollower.follow = false;
                 currentActivePath = null;
-                Debug.Log($"[{gameObject.name}] Reached end of linear path. Detaching and selecting next sketch action.");
 
-                // --- TEMPORARY SKETCHED-IN LOGIC: Decision Branching ---
-                // This is purely for testing the game loop and ensuring movement transitions are pretty.
-                // In the future, this will be replaced by the proper Quest Machine AI Brain logic system.
-                int choice = Random.Range(0, 3);
-
-                switch (choice)
+                // Randomly pick either a new Escape Spline or the Observation Spline to keep it flying beautifully.
+                if (Random.value > 0.5f)
                 {
-                    case 0:
-                        Debug.Log("Sketch Logic: Choosing to chain into another Escape Spline.");
-                        // Leaving currentActivePath as null will naturally trigger FindNearestEscapeRoute in the escape choreography.
-                        break;
-                    case 1:
-                        Debug.Log("Sketch Logic: Choosing to Freestyle for 4 seconds to show off flight motion.");
-                        // Allow the fallback flight to take over for a few seconds.
-                        temporaryFreestyleTimer = 4f;
-                        break;
-                    case 2:
-                        Debug.Log("Sketch Logic: Returning to Observation Spline directly.");
-                        // Bypassing bossBrain so the movement script purely handles the test loop itself.
-                        temporaryForceObservation = true;
-                        break;
+                    Debug.Log($"[{gameObject.name}] Reached end of linear path. Chaining to new Escape Spline.");
+                    ExecuteEscapeChoreography();
                 }
+                else
+                {
+                    Debug.Log($"[{gameObject.name}] Reached end of linear path. Returning to Observation Spline.");
+                    ExecuteObservationSpline();
+                }
+                return;
             }
         }
 
         // Read phase from the BossCreature brain to drive movement decisions.
         bool desiresToEscape = bossBrain != null &&
             (bossBrain.currentPhase == BossCreature.BossPhase.Exhausted);
-
-        // --- TEMPORARY SKETCHED-IN LOGIC ---
-        // If the sketch chose to return to observation, override the brain phase here.
-        if (temporaryForceObservation)
-        {
-            desiresToEscape = false;
-        }
 
         if (desiresToEscape)
         {
@@ -366,20 +322,7 @@ public class AirborneBossMovement : BaseBossMovement
         // Keep the dragon within the tether radius of the anchor.
         if (bossBrain == null) return;
 
-        SegmentedDragonManager dragonBody = GetComponent<SegmentedDragonManager>();
-        if (dragonBody == null || !dragonBody.IsTethered) return;
-
-        Transform anchor = dragonBody.TetherAnchorTransform;
-        float maxLength = dragonBody.TetherMaxLength;
-        if (anchor == null || maxLength <= 0f) return;
-
-        Vector3 toAnchor = anchor.position - transform.position;
-        if (toAnchor.magnitude > maxLength)
-        {
-            // Rubber-band: push root back toward anchor boundary.
-            transform.position = anchor.position - toAnchor.normalized * maxLength;
-            if (rootFollower != null) rootFollower.follow = false;
-        }
+        // Note: Assumes Tethering is managed elsewhere or through BaseBossMovement
     }
 
     private void ExecuteFreestyleFallback()
