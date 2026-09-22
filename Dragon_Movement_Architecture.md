@@ -22,15 +22,15 @@ The dragon is divided into a Brain (the invisible root) and a Body (the dynamica
 graph TD
     Root["Boss_AsianFireDragonNew (Invisible Root / The Brain)"]
 
-    Seg0["DragonSegment_0 (The Visual Head)"]
-    Seg1["DragonSegment_1 (Neck)"]
-    Seg2["DragonSegment_2 (Body)"]
-    SegX["DragonSegment_X (Tail)"]
+    Seg0["DragonSegment_0 (The Head)"]
+    Seg1["DragonSegment_1 (Dynamic Segment)"]
+    Seg2["DragonSegment_2 (Dynamic Segment)"]
+    SegN["DragonSegment_N (Dynamic Segment)"]
 
     Root -->|Spawns at Runtime| Seg0
     Root -->|Spawns at Runtime| Seg1
     Root -->|Spawns at Runtime| Seg2
-    Root -->|Spawns at Runtime| SegX
+    Root -->|Spawns at Runtime| SegN
 ```
 
 ---
