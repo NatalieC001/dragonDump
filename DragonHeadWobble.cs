@@ -69,3 +69,5 @@ public class DragonHeadWobble : MonoBehaviour
         transform.localRotation = initialLocalRotation * rotationOffset;
     }
 }
+
+// --- End of unified package ---

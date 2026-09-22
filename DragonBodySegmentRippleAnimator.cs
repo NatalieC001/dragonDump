@@ -79,3 +79,5 @@ public class DragonBodySegmentRippleAnimator : MonoBehaviour
         }
     }
 }
+
+// --- End of unified package ---

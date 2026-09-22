@@ -389,3 +389,5 @@ public class AirborneBossMovement : BaseBossMovement
         }
     }
 }
+
+// --- End of unified package ---
