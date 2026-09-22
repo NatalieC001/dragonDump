@@ -1,4 +1,3 @@
-using System.Collections;
 using UnityEngine;
 using Dreamteck.Splines;
 using System.Collections.Generic;
@@ -10,11 +9,11 @@ using System.Collections.Generic;
 ///
 /// SEPARATION OF CONCERNS:
 ///   SegmentedDragonManager  — segment lifecycle (spawn, regrowth, gap-close on death)
-///   DragonBreadcrumbManager   — movement (breadcrumbs, undulation, placement)
+///   DragonMovementManager   — movement (breadcrumbs, undulation, placement)
 ///   DragonSpacingManager    — spacing (cumulative segment offsets)
 ///   AirborneBossMovement    — intent (spline/freestyle modes, speed)
 /// </summary>
-public class DragonBreadcrumbManager : MonoBehaviour
+public class DragonMovementManager : MonoBehaviour
 {
     private struct PositionData
     {
