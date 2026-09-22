@@ -315,3 +315,5 @@ public class DragonMovementManager : MonoBehaviour
         currentUndulationScale = Mathf.Lerp(currentUndulationScale, target, Time.deltaTime * lerpRate);
     }
 }
+
+// --- End of unified package ---

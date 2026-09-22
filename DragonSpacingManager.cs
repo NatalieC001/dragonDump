@@ -69,9 +69,9 @@ public class DragonSpacingManager : MonoBehaviour
             // If we've reached the target segment, we're done summing
             if (data.segment == targetSegment)
             {
-                // Note: If we want the target segment to sit directly behind the previous one, 
-                // the distance is the center-to-center offset. 
-                // Since length is total bounding box length, we add half the previous piece's length 
+                // Note: If we want the target segment to sit directly behind the previous one,
+                // the distance is the center-to-center offset.
+                // Since length is total bounding box length, we add half the previous piece's length
                 // and half of this piece's length, or simply sum the full lengths up to this point
                 // if the origins are at the edge. Usually origins are in the center.
 
